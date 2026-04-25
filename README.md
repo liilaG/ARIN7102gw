@@ -766,7 +766,62 @@ This is expected. Query Intelligence only produces understanding and evidence ar
 
 # ARIN Document Sentiment Analysis (Implementation Plan)
 
-ARIN Document Sentiment Analysis is a **planned downstream module** that consumes the JSON artifacts produced by Query Intelligence. It performs financial sentiment analysis on retrieved documents using the **FinBERT** model and outputs structured sentiment results.
+ARIN Document Sentiment Analysis is a **planned downstream module** that consumes the JSON artifacts produced by Query Intelligence. It performs financial sentiment analysis on retrieved documents and outputs structured sentiment results.
+
+This module supports **two implementation approaches** with different resource requirements and performance characteristics:
+
+## Implementation Approaches
+
+### High Resource: FinBERT
+
+**Model**: [ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert) (~420MB)
+
+**Pros**:
+- High accuracy (85-95%) on financial text
+- Pre-trained on financial corpora (earnings reports, SEC filings, financial news, analyst reports)
+- Widely adopted in industry and research
+
+**Cons**:
+- Requires GPU or large memory for optimal performance
+- Slower inference (~50-100 docs/sec on CPU)
+- Requires Chinese→English translation before inference
+- Longer training/setup time (1-3 hours)
+
+**Best for**:
+- Production environments with high accuracy requirements
+- Scenarios with sufficient GPU resources
+- Complex long-text analysis
+
+### Low Resource: Lightweight Model (SGD + TF-IDF)
+
+**Model**: SGDClassifier + HashingVectorizer TF-IDF (~few MB)
+
+**Pros**:
+- Fast inference (~1000 docs/sec)
+- CPU-friendly, minimal memory footprint
+- Direct Chinese text processing (no translation needed)
+- Quick training (5-10 minutes)
+- Reuses existing training infrastructure
+
+**Cons**:
+- Moderate accuracy (75-85%) depending on training data quality
+- Performance depends on feature engineering and data quality
+
+**Best for**:
+- Rapid prototyping and validation
+- Resource-constrained environments (edge devices, low-spec servers)
+- Large-scale batch document processing
+- Frequent model retraining/iteration
+
+| Dimension | FinBERT (High Resource) | SGD+TF-IDF (Low Resource) |
+|---|---|---|
+| Model size | ~420MB | ~few MB |
+| Hardware | GPU recommended | CPU only |
+| Inference speed | ~50-100 docs/sec (CPU) | ~1000 docs/sec |
+| Chinese text | Requires translation | Direct processing |
+| Accuracy | 85-95% | 75-85% |
+| Training time | 1-3 hours | 5-10 minutes |
+| Implementation | Needs translation pipeline | Reuses existing code |
 
 ## Scope
 
@@ -774,14 +829,44 @@ ARIN Document Sentiment Analysis is a **planned downstream module** that consume
 - When full body text is unavailable, fall back to title + summary (short-text mode).
 - Skip analysis entirely when upstream NLU indicates `out_of_scope`, `product_info`, or `trading_rule_fee` intents.
 - Provide per-document sentiment labels and entity-level aggregate statistics.
+- **API compatibility**: Both approaches share identical API interfaces; downstream consumers are model-agnostic.
 
-## FinBERT Model
+## Data Sources
 
-This module uses [**ProsusAI/finbert**](https://huggingface.co/ProsusAI/finbert) as its core sentiment classifier.
+Both approaches can leverage existing sentiment datasets with adapters in `query_intelligence/external_data/adapters/sentiment.py`:
+
+| Dataset | Language | Labels | Use Case |
+|---|---:|---|---|
+| FinFE | Chinese | 3-class (neg/neu/pos) | Financial short text |
+| ChnSentiCorp | Chinese | 2-class (neg/pos) | General Chinese sentiment |
+| Financial News | Chinese | 2-class (neg/pos) | News headlines + body |
+
+✅ **Data ready**: Adapters already implemented for document-level sentiment training.
+
+## Model Architecture
+
+### High Resource (FinBERT)
+
+```
+Chinese document → Machine translation → FinBERT → Sentiment label + confidence
+```
+
+### Low Resource (SGD + TF-IDF)
+
+```
+Chinese document → Text augmentation → TF-IDF features → SGDClassifier → Sentiment label + confidence
+```
+
+**Reuse existing training code**:
+- `training/train_sentiment.py`: Training entry point
+- `query_intelligence/nlu/classifiers.py`: Model architecture (SGD + TF-IDF)
+- `query_intelligence/external_data/adapters/sentiment.py`: Data adapters
+
+## FinBERT Model Details (High Resource Approach)
 
 ### Overview
 
-FinBERT is a BERT-based model pre-trained on a large financial corpus (earnings reports, SEC filings, financial news, analyst reports) and fine-tuned on the Financial PhraseBank dataset (Malo et al., 2014). It is designed specifically for financial sentiment analysis and is widely adopted in industry and research.
+FinBERT is a BERT-based model pre-trained on a large financial corpus and fine-tuned on the Financial PhraseBank dataset (Malo et al., 2014).
 
 **Label taxonomy (3-class):**
 
@@ -793,9 +878,7 @@ FinBERT is a BERT-based model pre-trained on a large financial corpus (earnings 
 
 ### Chinese Text Handling
 
-FinBERT is an **English-only** model (`bert-base-uncased`). Chinese input text must be translated to English before inference.
-
-The proposed translation strategy is a lightweight machine translation step placed between document loading and FinBERT inference:
+FinBERT is an **English-only** model (`bert-base-uncased`). Chinese input text must be translated to English before inference:
 
 ```
 Chinese document text (title + summary + body)
@@ -810,9 +893,9 @@ FinBERT inference (English input)
 Sentiment label + confidence
 ```
 
-Translation can be performed by a free or lightweight service (e.g., HuggingFace translation pipeline, Tencent/Youdao/Google Translate API). The translation dependency is optional — if unavailable, the module should fall back to a rule-based sentiment heuristic.
+Translation can be performed by HuggingFace translation pipeline, Tencent/Youdao/Google Translate API, etc. The translation dependency is optional — if unavailable, the module should fall back to a rule-based sentiment heuristic or the lightweight model.
 
-### Usage
+### Usage Example
 
 ```python
 from transformers import pipeline
@@ -947,6 +1030,10 @@ Fields consumed per document:
       "trend": null
     }
   ],
+  "model_info": {
+    "model_type": "finbert",
+    "model_version": "ProsusAI/finbert"
+  },
   "generated_at": "2026-04-24T12:00:00"
 }
 ```
@@ -991,6 +1078,20 @@ Fields consumed per document:
 | `avg_sentiment_score` | float | Mean `sentiment_score` across all documents for this entity. |
 | `trend` | string or null | Reserved for future time-series trend computation; currently `null`. |
 
+## Deployment Selection Guide
+
+### Choose FinBERT (High Resource) if:
+- ✅ Production environment with high accuracy requirements
+- ✅ GPU resources available or acceptable slower inference
+- ✅ Processing complex long texts
+- ✅ Best performance is critical
+
+### Choose Lightweight Model (Low Resource) if:
+- ✅ Rapid prototyping and validation
+- ✅ Resource-constrained environments (edge devices, low-spec servers)
+- ✅ Large-scale batch document processing
+- ✅ Frequent model retraining/iteration needed
+
 ## Architecture
 
 ```mermaid
@@ -1001,22 +1102,43 @@ flowchart TD
   D -- skip --> E["Empty SentimentResult"]
   D -- pass --> F["Document Filter\nskip faq, check body/summary/title"]
   F --> G["Documents eligible for analysis"]
-  G --> H["Chinese → English\nMachine Translation"]
-  H --> I["FinBERT Inference\n(3-class: positive/negative/neutral)"]
-  I --> J["Per-Document\nSentimentItem"]
-  J --> K["Entity Aggregation Engine"]
-  J --> L["sentiment_result.json"]
-  K --> L
+  G --> H{Implementation Approach}
+  H -->|High Resource| I["Chinese → English\nMachine Translation"]
+  H -->|Low Resource| J["Text Augmentation\n+ TF-IDF Features"]
+  I --> K["FinBERT Inference\n(3-class: positive/negative/neutral)"]
+  J --> L["SGD+TF-IDF Inference\n(3-class: positive/negative/neutral)"]
+  K --> M["Per-Document\nSentimentItem"]
+  L --> N["Per-Document\nSentimentItem"]
+  M --> O["Entity Aggregation Engine"]
+  N --> O
+  O --> P["sentiment_result.json\n(model_info: finbert|sgd_tfidf)"]
 ```
+
+## Implementation Roadmap
+
+### Low Resource (Fast Path)
+1. Reuse existing training code in `training/train_sentiment.py`
+2. Collect document sentiment annotations (adapters already available)
+3. Train model: `python -m training.train_document_sentiment`
+4. Integrate into API
+
+### High Resource (Full Path)
+1. Integrate HuggingFace Transformers
+2. Implement Chinese translation pipeline
+3. Load FinBERT model
+4. Optimize batch inference
+5. Integrate into API
 
 ## Key Design Decisions
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| Relationship to QI | **Fully independent downstream module** | No modifications to `query_intelligence/` code. |
-| Model | **FinBERT** (ProsusAI/finbert) | Pre-trained on financial corpora; 3-class output aligns with document sentiment needs. |
-| Chinese text | **Machine translation** before FinBERT | FinBERT is English-only (bert-base-uncased); translation is a lightweight pre-processing step. |
-| Analysis scope | All `source_type` except `faq` | News, announcements, research notes, and product docs all carry sentiment signals. |
-| Short-text fallback | Analyze title+summary when body is unavailable | FinBERT is effective on short text; no need to discard these documents. |
-| Skip conditions | `out_of_scope` / `product_info` / `trading_rule_fee` | Sentiment analysis provides no value for these query types. |
-| Output format | `sentiment_result.json` alongside QI artifacts | Consistent artifact style for downstream traceability. |
+| Decision | High Resource | Low Resource | Rationale |
+|---|---|---|---|
+| Model | FinBERT | SGD+TF-IDF | Accuracy vs speed trade-off |
+| Chinese text | Machine translation | Direct processing | Performance vs implementation complexity |
+| Deployment requirements | GPU recommended | CPU only | Resource availability |
+| API compatibility | ✅ Same interface | ✅ Same interface | Downstream consumers are model-agnostic |
+| Relationship to QI | **Fully independent downstream module** | **Fully independent downstream module** | No modifications to `query_intelligence/` code. |
+| Analysis scope | All `source_type` except `faq` | All `source_type` except `faq` | News, announcements, research notes, and product docs all carry sentiment signals. |
+| Short-text fallback | Analyze title+summary when body is unavailable | Analyze title+summary when body is unavailable | Both models effective on short text. |
+| Skip conditions | `out_of_scope` / `product_info` / `trading_rule_fee` | `out_of_scope` / `product_info` / `trading_rule_fee` | Sentiment analysis provides no value for these query types. |
+| Output format | `sentiment_result.json` alongside QI artifacts | `sentiment_result.json` alongside QI artifacts | Consistent artifact style for downstream traceability. |

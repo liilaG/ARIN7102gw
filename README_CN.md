@@ -1004,7 +1004,62 @@ python -m scripts.materialize_runtime_entity_assets
 
 # ARIN 文档情感分析（实现计划）
 
-ARIN 文档情感分析是一个**计划中的下游模块**，它消费 Query Intelligence 产出的 JSON 产物，使用 **FinBERT** 模型对检索到的文档进行金融情感分析，并输出结构化情感结果。
+ARIN 文档情感分析是一个**计划中的下游模块**，它消费 Query Intelligence 产出的 JSON 产物，对检索到的文档进行金融情感分析，并输出结构化情感结果。
+
+本模块支持**两种实现方案**，具有不同的资源需求和性能特征：
+
+## 实现方案对比
+
+### 高资源方案：FinBERT
+
+**模型**：[ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert)（~420MB）
+
+**优点**：
+- 高准确率（85-95%）处理金融文本
+- 在金融语料上预训练（财报、SEC 文件、财经新闻、分析师报告）
+- 业界和研究领域广泛应用
+
+**缺点**：
+- 需要 GPU 或大内存以获得最佳性能
+- 推理速度较慢（CPU 上 ~50-100 文档/秒）
+- 需要中文→英文翻译预处理
+- 训练/配置时间较长（1-3 小时）
+
+**适用场景**：
+- 对准确率要求高的生产环境
+- 有充足 GPU 资源的场景
+- 复杂长文本分析
+
+### 低资源方案：轻量级模型（SGD + TF-IDF）
+
+**模型**：SGDClassifier + HashingVectorizer TF-IDF（~几 MB）
+
+**优点**：
+- 快速推理（~1000 文档/秒）
+- 仅需 CPU，内存占用极小
+- 直接处理中文（无需翻译）
+- 快速训练（5-10 分钟）
+- 复用现有训练基础设施
+
+**缺点**：
+- 中等准确率（75-85%），取决于训练数据质量
+- 性能依赖特征工程和数据质量
+
+**适用场景**：
+- 快速原型验证
+- 资源受限环境（边缘设备、低配服务器）
+- 大规模批量文档处理
+- 频繁的模型重训练/迭代
+
+| 维度 | FinBERT (高资源) | SGD+TF-IDF (低资源) |
+|---|---|---|
+| 模型大小 | ~420MB | ~几MB |
+| 硬件要求 | GPU 推荐 | CPU 即可 |
+| 推理速度 | ~50-100 文档/秒 (CPU) | ~1000 文档/秒 |
+| 中文处理 | 需要翻译 | 直接处理 |
+| 准确率 | 85-95% | 75-85% |
+| 训练时间 | 1-3 小时 | 5-10 分钟 |
+| 实现难度 | 需要翻译 pipeline | 复用现有代码 |
 
 ## 支持范围
 
@@ -1012,14 +1067,44 @@ ARIN 文档情感分析是一个**计划中的下游模块**，它消费 Query I
 - 当正文缺失时，退回到标题 + 摘要（短文本模式）。
 - 当上游 NLU 识别为 `out_of_scope`、`product_info`、`trading_rule_fee` 时，跳过整个查询。
 - 提供逐文档情感标签和按实体的聚合统计。
+- **API 兼容性**：两种方案共享相同的 API 接口；下游消费者对模型类型无感知。
 
-## FinBERT 模型
+## 数据来源
 
-本模块使用 [**ProsusAI/finbert**](https://huggingface.co/ProsusAI/finbert) 作为核心情感分类器。
+两种方案均可利用现有情感数据集，适配器位于 `query_intelligence/external_data/adapters/sentiment.py`：
+
+| 数据集 | 语言 | 标签 | 用途 |
+|---|---:|---|---|
+| FinFE | 中文 | 3类 (neg/neu/pos) | 金融短文本 |
+| ChnSentiCorp | 中文 | 2类 (neg/pos) | 通用中文情感 |
+| 金融新闻情感 | 中文 | 2类 (neg/pos) | 新闻标题+正文 |
+
+✅ **数据已就绪**：文档级情感训练的适配器已实现。
+
+## 模型架构
+
+### 高资源方案 (FinBERT)
+
+```
+中文文档 → 机器翻译 → FinBERT → 情感标签 + 置信度
+```
+
+### 低资源方案 (SGD + TF-IDF)
+
+```
+中文文档 → 文本增强 → TF-IDF 特征 → SGDClassifier → 情感标签 + 置信度
+```
+
+**复用现有训练代码**：
+- `training/train_sentiment.py`：训练入口
+- `query_intelligence/nlu/classifiers.py`：模型架构（SGD + TF-IDF）
+- `query_intelligence/external_data/adapters/sentiment.py`：数据适配器
+
+## FinBERT 模型详情（高资源方案）
 
 ### 概述
 
-FinBERT 是一个基于 BERT 的预训练模型，在大量金融语料（财报、SEC 文件、财经新闻、分析师报告）上继续预训练，并在 Financial PhraseBank 数据集（Malo et al., 2014）上微调的情感分类模型。它专为金融情感分析设计，在业界和研究领域得到广泛应用。
+FinBERT 是一个基于 BERT 的预训练模型，在大量金融语料上继续预训练，并在 Financial PhraseBank 数据集（Malo et al., 2014）上微调的情感分类模型。
 
 **标签体系（3 分类）：**
 
@@ -1031,9 +1116,7 @@ FinBERT 是一个基于 BERT 的预训练模型，在大量金融语料（财报
 
 ### 中文文本处理
 
-FinBERT 是一个**纯英文模型**（`bert-base-uncased`）。中文输入文本需要在推理前翻译为英文。
-
-翻译策略如下：在文档加载和 FinBERT 推理之间插入一个轻量级的机器翻译步骤：
+FinBERT 是一个**纯英文模型**（`bert-base-uncased`）。中文输入文本需要在推理前翻译为英文：
 
 ```
 中文文档文本（标题 + 摘要 + 正文）
@@ -1048,7 +1131,7 @@ FinBERT 推理（英文输入）
 情感标签 + 置信度
 ```
 
-翻译可以调用 HuggingFace 翻译 pipeline、腾讯/有道/Google Translate API 等轻量服务。翻译依赖是可选的——当不可用时，模块应回退到基于词典的规则情感判断。
+翻译可以调用 HuggingFace 翻译 pipeline、腾讯/有道/Google Translate API 等轻量服务。翻译依赖是可选的——当不可用时，模块应回退到基于词典的规则情感判断或使用轻量级模型。
 
 ### 使用示例
 
@@ -1185,6 +1268,10 @@ result = classifier("Stocks rallied and the British pound gained.")
       "trend": null
     }
   ],
+  "model_info": {
+    "model_type": "finbert",
+    "model_version": "ProsusAI/finbert"
+  },
   "generated_at": "2026-04-24T12:00:00"
 }
 ```
@@ -1229,6 +1316,20 @@ result = classifier("Stocks rallied and the British pound gained.")
 | `avg_sentiment_score` | float | 该实体的平均 `sentiment_score`。 |
 | `trend` | string or null | 预留字段，用于未来时间序列趋势计算；当前为 `null`。 |
 
+## 部署选择指南
+
+### 选择 FinBERT（高资源）如果：
+- ✅ 生产环境、对准确率要求极高
+- ✅ 有 GPU 资源或可接受较慢推理
+- ✅ 处理复杂长文本
+- ✅ 需要最佳性能
+
+### 选择轻量级模型（低资源）如果：
+- ✅ 快速原型验证
+- ✅ 资源受限环境（边缘设备、低配服务器）
+- ✅ 大规模批量文档处理
+- ✅ 需要快速迭代/频繁重训
+
 ## 架构
 
 ```mermaid
@@ -1239,22 +1340,43 @@ flowchart TD
   D -- 跳过 --> E["空 SentimentResult"]
   D -- 通过 --> F["文档过滤\n跳过 faq，检查 body/summary/title"]
   F --> G["可分析的文档列表"]
-  G --> H["中文 → 英文\n机器翻译"]
-  H --> I["FinBERT 推理\n(3 分类: positive/negative/neutral)"]
-  I --> J["逐文档\nSentimentItem"]
-  J --> K["实体聚合引擎"]
-  J --> L["sentiment_result.json"]
-  K --> L
+  G --> H{实现方案选择}
+  H -->|高资源方案| I["中文 → 英文\n机器翻译"]
+  H -->|低资源方案| J["文本增强\n+ TF-IDF 特征"]
+  I --> K["FinBERT 推理\n(3 分类: positive/negative/neutral)"]
+  J --> L["SGD+TF-IDF 推理\n(3 分类: positive/negative/neutral)"]
+  K --> M["逐文档\nSentimentItem"]
+  L --> N["逐文档\nSentimentItem"]
+  M --> O["实体聚合引擎"]
+  N --> O
+  O --> P["sentiment_result.json\n(model_info: finbert|sgd_tfidf)"]
 ```
+
+## 实现路径
+
+### 低资源方案（快速路径）
+1. 复用现有训练代码 `training/train_sentiment.py`
+2. 收集文档情感标注数据（已有适配器）
+3. 训练模型：`python -m training.train_document_sentiment`
+4. 集成到 API
+
+### 高资源方案（完整路径）
+1. 集成 HuggingFace Transformers
+2. 实现中文翻译 pipeline
+3. 加载 FinBERT 模型
+4. 批量推理优化
+5. 集成到 API
 
 ## 关键决策记录
 
-| 决策 | 选择 | 理由 |
-|---|---|---|
-| 与 QI 的关系 | **完全独立的下游模块** | 不修改 `query_intelligence/` 任何代码。 |
-| 模型 | **FinBERT** (ProsusAI/finbert) | 在金融语料上预训练；3 分类输出符合文档情感需求。 |
-| 中文文本 | **经过机器翻译**再送入 FinBERT | FinBERT 是纯英文模型；翻译是轻量预处理步骤。 |
-| 分析范围 | 除 `faq` 外所有 `source_type` | 新闻、公告、研报、产品文档均有情感信号。 |
-| 短文本回退 | 无正文时分析标题+摘要 | FinBERT 对短文本同样有效，不需要丢弃这些文档。 |
-| 跳过条件 | `out_of_scope` / `product_info` / `trading_rule_fee` | 这些查询类型的情感分析无价值。 |
-| 输出格式 | `sentiment_result.json` 与 QI 产物并列 | 保持一致的 artifact 风格，方便下游追溯。 |
+| 决策 | 高资源方案 | 低资源方案 | 理由 |
+|---|---|---|---|
+| 模型 | FinBERT | SGD+TF-IDF | 准确率 vs 速度权衡 |
+| 中文文本 | 机器翻译 | 直接处理 | 性能 vs 实现复杂度 |
+| 部署要求 | GPU 推荐 | CPU 即可 | 资源可用性 |
+| API 兼容性 | ✅ 相同接口 | ✅ 相同接口 | 下游消费者对模型类型无感知 |
+| 与 QI 的关系 | **完全独立的下游模块** | **完全独立的下游模块** | 不修改 `query_intelligence/` 任何代码。 |
+| 分析范围 | 除 `faq` 外所有 `source_type` | 除 `faq` 外所有 `source_type` | 新闻、公告、研报、产品文档均有情感信号。 |
+| 短文本回退 | 无正文时分析标题+摘要 | 无正文时分析标题+摘要 | 两种模型对短文本都有效。 |
+| 跳过条件 | `out_of_scope` / `product_info` / `trading_rule_fee` | `out_of_scope` / `product_info` / `trading_rule_fee` | 这些查询类型的情感分析无价值。 |
+| 输出格式 | `sentiment_result.json` 与 QI 产物并列 | `sentiment_result.json` 与 QI 产物并列 | 保持一致的 artifact 风格，方便下游追溯。 |
