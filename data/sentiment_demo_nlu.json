@@ -1,0 +1,64 @@
+{
+  "query_id": "demo_20260427_001",
+  "raw_query": "最近贵州茅台和宁德时代有什么重大消息？",
+  "normalized_query": "最近贵州茅台和宁德时代有什么重大消息",
+  "question_style": {
+    "label": "open_ended",
+    "confidence": 0.92
+  },
+  "product_type": {
+    "label": "stock",
+    "confidence": 0.98
+  },
+  "intent_labels": [
+    {"label": "information_inquiry", "confidence": 0.85},
+    {"label": "sentiment_analysis", "confidence": 0.78}
+  ],
+  "topic_labels": [
+    {"label": "equity", "confidence": 0.95}
+  ],
+  "entities": [
+    {
+      "symbol": "600519.SH",
+      "canonical_name": "贵州茅台",
+      "mention": "茅台",
+      "entity_type": "stock",
+      "exchange": "SH"
+    },
+    {
+      "symbol": "300750.SZ",
+      "canonical_name": "宁德时代",
+      "mention": "宁德时代",
+      "entity_type": "stock",
+      "exchange": "SZ"
+    },
+    {
+      "symbol": "AAPL",
+      "canonical_name": "Apple Inc.",
+      "mention": "Apple",
+      "entity_type": "stock",
+      "exchange": "NASDAQ"
+    },
+    {
+      "symbol": "TSLA",
+      "canonical_name": "Tesla Inc.",
+      "mention": "特斯拉",
+      "entity_type": "stock",
+      "exchange": "NASDAQ"
+    }
+  ],
+  "comparison_targets": [],
+  "keywords": ["重大消息", "最近"],
+  "time_scope": {
+    "label": "recent",
+    "granularity": "week"
+  },
+  "source_plan": [
+    {"source": "news", "priority": 1},
+    {"source": "announcement", "priority": 2},
+    {"source": "research_note", "priority": 3}
+  ],
+  "risk_flags": [],
+  "missing_slots": [],
+  "confidence": 0.91
+}

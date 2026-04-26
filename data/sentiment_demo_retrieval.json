@@ -1,0 +1,150 @@
+{
+  "query_id": "demo_20260427_001",
+  "nlu_snapshot": {
+    "query_id": "demo_20260427_001",
+    "product_type": {"label": "stock"}
+  },
+  "executed_sources": ["news", "announcement", "research_note", "product_doc", "faq"],
+  "documents": [
+    {
+      "evidence_id": "demo_news_positive_maotai",
+      "source_type": "news",
+      "source_name": "证券时报",
+      "publish_time": "2026-04-25T09:30:00",
+      "title": "贵州茅台一季度业绩大超预期 营收净利润双创新高",
+      "summary": "贵州茅台2026年Q1营收突破500亿元，净利润同比增长25%，超出所有分析师预期。",
+      "body": "贵州茅台酒股份有限公司今日发布2026年第一季度报告，业绩表现极其亮眼。公司一季度实现营业收入508.6亿元，同比增长22.3%；实现归母净利润268.4亿元，同比增长25.1%，双双创下历史新高。茅台酒系列产品持续供不应求，直销渠道占比进一步提升至58%。多位券商分析师表示，茅台品牌护城河深厚，产品结构优化效果显著，长期增长动力充足。公司同时宣布将加大分红力度，2025年度拟每10股派发现金红利230元，股息率达到1.8%。投资者对此反应积极，今日早盘股价高开3.5%。",
+      "body_available": true,
+      "rank_score": 0.98
+    },
+    {
+      "evidence_id": "demo_news_negative_wly",
+      "source_type": "news",
+      "source_name": "财经网",
+      "publish_time": "2026-04-24T15:20:00",
+      "title": "五粮液股价连续下挫 经销商库存压力加大引发市场担忧",
+      "summary": "五粮液股价本周累计下跌12%，经销商渠道库存积压严重，市场对公司下半年业绩表示担忧。",
+      "body": "白酒行业近期遭遇寒流。五粮液股价本周持续走低，累计跌幅已达12%，市值蒸发超过400亿元。据多位经销商反映，终端动销明显放缓，渠道库存水平较去年同期上升约30%。有业内人士透露，部分经销商已开始降价出货，批价出现松动迹象。华创证券在最新研报中下调五粮液2026年盈利预测，将目标价从198元下调至165元。市场担忧白酒行业高速增长时代已结束，渠道去库存压力将在下半年进一步显现。五粮液方面回应称，公司正在积极调整渠道策略，但短期内仍需面对行业调整压力。",
+      "body_available": true,
+      "rank_score": 0.92
+    },
+    {
+      "evidence_id": "demo_announcement_positive_catl",
+      "source_type": "announcement",
+      "source_name": "深交所",
+      "publish_time": "2026-04-25T17:00:00",
+      "title": "宁德时代：关于新一代固态电池研发取得重大突破的公告",
+      "summary": "宁德时代宣布新一代固态电池能量密度突破500Wh/kg，计划2027年量产。",
+      "body": "宁德时代新能源科技股份有限公司董事会郑重公告：公司研发团队在新一代全固态电池技术领域取得里程碑式突破。经第三方权威机构检测，公司研发的固态电池单体能量密度达到520Wh/kg，循环寿命超过3000次，安全性测试全部通过。该技术将彻底解决当前液态锂电池的安全隐患和能量密度瓶颈。公司已启动中试生产线建设，预计2027年下半年实现规模化量产。此项技术突破将极大巩固公司在全球动力电池行业的技术领先地位，为公司打开万亿级储能和航空电动化新市场。董事会对此表示热烈祝贺，并对研发团队给予特别嘉奖。",
+      "body_available": true,
+      "rank_score": 0.95
+    },
+    {
+      "evidence_id": "demo_research_negative_tsla",
+      "source_type": "research_note",
+      "source_name": "Goldman Sachs",
+      "publish_time": "2026-04-23T08:00:00",
+      "title": "Tesla Inc. — Downgrade to SELL: Delivery Miss and Margin Compression",
+      "summary": "Goldman Sachs downgrades Tesla to SELL with a downside target of $180, citing severe delivery shortfall and accelerating margin erosion.",
+      "body": "Tesla Inc. reported Q1 2026 deliveries of just 365,000 units, missing consensus estimates by 18% and marking the worst quarterly performance since 2022. Gross margins excluding credits collapsed to 11.2%, down 520bps year-over-year, driven by aggressive price cuts in China and Europe that failed to stimulate demand. Inventory days swelled to 28 days, the highest in the company's history. We see multiple structural headwinds: intensifying competition from BYD and Xiaomi in China, an aging product lineup with no mass-market vehicle expected before 2028, and mounting regulatory scrutiny of FSD safety claims. We are cutting our FY2026 EPS estimate from $2.80 to $1.45 and downgrading to SELL. Our revised 12-month price target of $180 implies 35% downside from current levels.",
+      "body_available": true,
+      "rank_score": 0.88
+    },
+    {
+      "evidence_id": "demo_research_positive_aapl",
+      "source_type": "research_note",
+      "source_name": "Morgan Stanley",
+      "publish_time": "2026-04-24T07:00:00",
+      "title": "Apple Inc. — Reiterate OVERWEIGHT: Services Supercycle Underway",
+      "summary": "Morgan Stanley raises Apple price target to $260, seeing a multi-year services growth supercycle driven by AI adoption.",
+      "body": "Apple Inc. delivered a stellar Q1 2026 with revenue of $98.2 billion, beating Street estimates by $3.5 billion. Services revenue grew 18% year-over-year to an all-time record of $26.5 billion, now representing 27% of total revenue. We believe Apple is at the beginning of a multi-year services supercycle, fueled by the rapid adoption of Apple Intelligence AI features across the installed base of 2.4 billion active devices. The App Store, Apple Music, iCloud, and Apple Pay all posted double-digit growth. iPhone revenue also surprised to the upside at $48.1 billion, as the AI-driven upgrade cycle gained momentum in emerging markets including India and Southeast Asia. We raise our 12-month price target to $260 and reiterate our OVERWEIGHT rating.",
+      "body_available": true,
+      "rank_score": 0.90
+    },
+    {
+      "evidence_id": "demo_news_neutral_etf",
+      "source_type": "news",
+      "source_name": "中国证券报",
+      "publish_time": "2026-04-25T10:00:00",
+      "title": "沪深300ETF规模突破3000亿元 成为最大单只权益类基金",
+      "summary": "华泰柏瑞沪深300ETF最新规模达到3050亿元，今年以来净流入超过500亿元。",
+      "body": "Wind数据显示，截至4月24日，华泰柏瑞沪深300ETF基金规模达到3050亿元，正式突破3000亿元大关，成为全市场规模最大的单只权益类基金产品。今年以来该ETF累计净流入资金超过500亿元，显示出投资者通过指数化工具参与权益市场的意愿持续增强。业内人士分析认为，ETF具有费率低、透明度高、流动性好等优势，正成为越来越多投资者资产配置的首选工具。目前全市场ETF总规模已突破4万亿元，其中股票型ETF占比约70%。监管部门也在持续推进ETF市场改革创新，包括推出更多跨境ETF、商品ETF等创新产品。",
+      "body_available": true,
+      "rank_score": 0.75
+    },
+    {
+      "evidence_id": "demo_news_mixed_sentiment",
+      "source_type": "news",
+      "source_name": "第一财经",
+      "publish_time": "2026-04-24T14:00:00",
+      "title": "宁德时代国内份额稳固但海外扩张遭遇阻力",
+      "summary": "宁德时代国内动力电池装机份额保持在45%，但欧洲工厂建设进度延迟，海外业务面临不确定性。",
+      "body": "根据中国汽车动力电池产业创新联盟最新数据，宁德时代2026年一季度国内动力电池装机量市场份额稳定在45.2%，继续遥遥领先于竞争对手。公司技术实力和成本控制能力在国内市场无可匹敌，客户涵盖几乎所有主流车企。然而在海外市场，形势则不容乐观。宁德时代位于匈牙利和德国的电池工厂建设进度均出现延迟，分别比原计划推迟6个月和4个月。欧洲当地环保审批流程复杂、劳动力成本超预期等因素是主要原因。与此同时，韩国LG新能源和三星SDI正在加速抢占欧洲客户。分析师指出，宁德时代的全球化进程正面临严峻考验，在地缘政治风险上升的背景下，海外扩张的不确定性明显增加。",
+      "body_available": true,
+      "rank_score": 0.85
+    },
+    {
+      "evidence_id": "demo_announcement_neutral_board",
+      "source_type": "announcement",
+      "source_name": "上交所",
+      "publish_time": "2026-04-22T16:00:00",
+      "title": "贵州茅台：第五届董事会第十二次会议决议公告",
+      "summary": "贵州茅台召开董事会，审议通过定期报告编制、续聘会计师事务所等例行事项。",
+      "body": "贵州茅台酒股份有限公司第五届董事会第十二次会议于2026年4月22日在公司会议室召开。会议应到董事11人，实到董事11人。会议审议通过了以下议案：一、《公司2026年第一季度报告》；二、《关于续聘2026年度财务审计机构的议案》；三、《关于修订<公司章程>部分条款的议案》；四、《关于召开2025年度股东大会的议案》。上述议案均以11票同意、0票反对、0票弃权获得通过。本次董事会决议内容不涉及重大资产重组、对外担保等敏感事项，属于公司例行治理程序。",
+      "body_available": true,
+      "rank_score": 0.70
+    },
+    {
+      "evidence_id": "demo_product_doc_csi300",
+      "source_type": "product_doc",
+      "source_name": "华泰柏瑞基金",
+      "publish_time": "2026-04-01T09:00:00",
+      "title": "华泰柏瑞沪深300ETF产品说明书",
+      "summary": "沪深300ETF跟踪沪深300指数，采用完全复制法，年管理费率0.15%。",
+      "body": "华泰柏瑞沪深300ETF是一只被动指数型基金，跟踪标的为沪深300指数。沪深300指数由上海和深圳证券市场中市值大、流动性好的300只股票组成，综合反映A股市场整体表现。本基金采用完全复制法进行指数跟踪，日均跟踪偏离度控制在0.2%以内。基金成立于2012年5月4日，截至2026年3月31日规模超过3000亿元。投资者可通过场内交易买卖基金份额，最小交易单位为100份。基金年管理费率为0.15%，托管费率为0.05%，综合费率处于行业较低水平。风险等级为R3（中等风险），适合风险承受能力为C3及以上的投资者。",
+      "body_available": true,
+      "rank_score": 0.60
+    },
+    {
+      "evidence_id": "demo_faq_unsupported",
+      "source_type": "faq",
+      "source_name": "投资者教育平台",
+      "publish_time": "2026-03-15T00:00:00",
+      "title": "什么是市盈率（PE）？",
+      "summary": "市盈率是股票价格除以每股收益的比率，是衡量股票估值水平的常用指标。",
+      "body": "市盈率（Price-to-Earnings Ratio，简称PE）是评估股票估值水平的重要指标，计算公式为：市盈率 = 股票当前价格 / 每股收益（EPS）。市盈率反映了投资者为获取每单位盈利所愿意支付的价格。一般来说，高市盈率可能意味着市场对公司未来盈利增长有较高预期，也可能意味着股票被高估；低市盈率可能意味着股票被低估，也可能意味着市场对公司前景不看好。投资者在使用市盈率进行分析时，需要注意结合行业特点、公司成长阶段、盈利质量等因素进行综合判断，不宜简单以市盈率高低作为买卖决策的唯一依据。",
+      "body_available": true,
+      "rank_score": 0.30
+    },
+    {
+      "evidence_id": "demo_news_short_no_body",
+      "source_type": "news",
+      "source_name": "21世纪经济报道",
+      "publish_time": "2026-04-25T08:30:00",
+      "title": "宁德时代获多家机构上调目标价 看好固态电池前景",
+      "summary": "宁德时代固态电池突破引发机构热议，中信、华泰等多家券商上调目标价至350元以上。",
+      "body_available": false,
+      "rank_score": 0.82
+    }
+  ],
+  "structured_data": [],
+  "evidence_groups": [],
+  "coverage": {
+    "news": true,
+    "announcement": true,
+    "research_note": true,
+    "product_doc": true,
+    "faq": true
+  },
+  "coverage_detail": {},
+  "warnings": [],
+  "retrieval_confidence": 0.90,
+  "analysis_summary": {
+    "data_readiness": {
+      "has_news": true,
+      "has_announcement": true,
+      "has_research_note": true
+    }
+  },
+  "debug_trace": {}
+}
