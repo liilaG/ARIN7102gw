@@ -20,3 +20,5 @@ huggingface_hub>=0.28,<1
 jieba>=0.42,<1
 lingua-language-detector>=2.0,<3
 nltk>=3.9,<4
+torch>=2.0,<3
+transformers>=4.40,<5
