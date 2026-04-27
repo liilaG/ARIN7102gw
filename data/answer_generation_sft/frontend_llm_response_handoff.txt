@@ -60,7 +60,7 @@ Option C: pipe a previous pipeline output through stdin.
   python scripts/llm_response.py \
     --input -
 
-Option D: run as a persistent API service for frontend integration.
+Option D: run as a persistent HTTP service for frontend integration.
 
   python scripts/llm_response.py \
     --serve \
@@ -93,6 +93,39 @@ Output behavior:
   In --serve mode the response JSON is returned directly by the HTTP endpoint.
   The service loads both models once at startup and reuses them for later
   requests.
+
+Large-model / AutoDL smoke test:
+
+  Use this after the two default models are available locally or can be
+  downloaded. LLM_MODELS_DIR keeps HuggingFace downloads under models/llm so
+  repeated tests reuse the same checkpoint files.
+
+  LLM_MODELS_DIR=models/llm python scripts/llm_response.py \
+    --query "中国平安最近为什么涨？" \
+    --top-k 5 \
+    --answer-model instruction-pretrain/finance-Llama3-8B \
+    --next-question-model Qwen/Qwen2.5-3B-Instruct \
+    --device-map auto \
+    --dtype auto \
+    --answer-max-new-tokens 400 \
+    --next-max-new-tokens 160 \
+    --log-level INFO
+
+  If the models were downloaded outside models/llm, pass explicit local paths:
+
+  python scripts/llm_response.py \
+    --query "中国平安最近为什么涨？" \
+    --top-k 5 \
+    --answer-model /root/finance-Llama3-8B \
+    --next-question-model /root/Qwen2.5-3B-Instruct \
+    --device-map auto \
+    --dtype auto \
+    --answer-max-new-tokens 400 \
+    --next-max-new-tokens 160 \
+    --log-level INFO
+
+  For repeated manual checks, prefer --serve because CLI mode loads both
+  checkpoints for each run, while service mode loads them once at startup.
 
 JSON format recovery:
 

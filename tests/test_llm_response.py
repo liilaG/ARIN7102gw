@@ -15,6 +15,8 @@ from scripts.llm_response import (
     extract_json_object,
     hf_token,
     load_few_shot_bank,
+    make_next_question_language_repair_messages,
+    next_questions_match_language,
     normalize_next_questions,
     resolve_model_path,
     select_few_shots,
@@ -142,6 +144,19 @@ def test_resolve_model_path_prefers_local_models_dir(tmp_path: Path) -> None:
     assert resolved == str(model_dir)
 
 
+def test_resolve_model_path_uses_hf_cache_snapshot(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "models--owner--demo-model"
+    snapshot = cache_dir / "snapshots" / "abc123"
+    snapshot.mkdir(parents=True)
+    (cache_dir / "refs").mkdir()
+    (cache_dir / "refs" / "main").write_text("abc123", encoding="utf-8")
+    (snapshot / "config.json").write_text("{}", encoding="utf-8")
+
+    resolved = resolve_model_path("owner/demo-model", models_dir=tmp_path)
+
+    assert resolved == str(snapshot)
+
+
 def test_hf_token_reads_standard_environment_variables(monkeypatch) -> None:
     monkeypatch.delenv("HF_TOKEN", raising=False)
     monkeypatch.delenv("HUGGINGFACE_HUB_TOKEN", raising=False)
@@ -196,6 +211,39 @@ def test_normalize_next_questions_returns_three_bounded_predictions() -> None:
     assert result["predictions"][2]["reason"] == "fallback"
 
 
+def test_next_questions_language_mismatch_can_be_repaired_by_model_instruction() -> None:
+    output = {
+        "predictions": [
+            {"question": "What drove the price move?", "score": 0.9, "reason": "why_followup"},
+            {"question": "What risks should I watch?", "score": 0.8, "reason": "risk_followup"},
+            {"question": "What is the outlook?", "score": 0.7, "reason": "forecast_followup"},
+        ]
+    }
+
+    assert next_questions_match_language(output, "中国平安最近为什么涨？") is False
+
+    messages = make_next_question_language_repair_messages("中国平安最近为什么涨？", output)
+
+    assert "Chinese" in messages[0]["content"]
+    assert "current_output" in messages[1]["content"]
+
+
+def test_normalize_next_questions_keeps_model_predictions_without_hardcoded_translation() -> None:
+    result = normalize_next_questions(
+        {
+            "predictions": [
+                {"question": "What drove the price move?", "score": 0.9, "reason": "why_followup"},
+                {"question": "What risks should I watch?", "score": 0.8, "reason": "risk_followup"},
+                {"question": "What is the outlook?", "score": 0.7, "reason": "forecast_followup"},
+            ]
+        },
+        "中国平安最近为什么涨？",
+    )
+
+    assert result["predictions"][0]["question"] == "What drove the price move?"
+    assert result["predictions"][0]["reason"] == "why_followup"
+
+
 def test_extract_json_object_repairs_common_malformed_json() -> None:
     pytest.importorskip("json_repair")
 
@@ -247,3 +295,60 @@ def test_build_frontend_response_adds_llm_sections_without_model_loading() -> No
     assert response["answer_generation"]["model_name"] == "answer-model"
     assert response["next_question_prediction"]["model_name"] == "next-model"
     assert response["request"]["query_id"] == "Q1"
+
+
+def test_build_frontend_response_localizes_missing_risk_disclaimer() -> None:
+    english_record = _sample_record()
+    english_record["query"] = "Why has Ping An been rising recently?"
+    english_record["nlu_result"]["raw_query"] = english_record["query"]
+
+    english_response = build_frontend_response(
+        english_record,
+        {"answer": "It is mainly supported by policy expectations.", "key_points": [], "evidence_used": [], "limitations": []},
+        {"predictions": []},
+        answer_model="answer-model",
+        next_question_model="next-model",
+    )
+
+    assert english_response["answer_generation"]["risk_disclaimer"] == (
+        "This answer is based only on the provided evidence and is not investment advice."
+    )
+
+    chinese_response = build_frontend_response(
+        _sample_record(),
+        {"answer": "主要受政策预期支持。", "key_points": [], "evidence_used": [], "limitations": []},
+        {"predictions": []},
+        answer_model="answer-model",
+        next_question_model="next-model",
+    )
+
+    assert chinese_response["answer_generation"]["risk_disclaimer"] == "以上内容仅基于给定证据生成，不构成投资建议或确定性买卖结论。"
+
+
+def test_build_frontend_response_trims_overlong_answer_text() -> None:
+    response = build_frontend_response(
+        _sample_record(),
+        {"answer": "上涨原因很多。" * 80, "key_points": [], "evidence_used": [], "limitations": []},
+        {"predictions": []},
+        answer_model="answer-model",
+        next_question_model="next-model",
+    )
+
+    assert len(response["answer_generation"]["answer"]) <= 243
+
+
+def test_build_frontend_response_caps_evidence_used() -> None:
+    response = build_frontend_response(
+        _sample_record(),
+        {
+            "answer": "主要受估值修复和行业情绪改善影响。",
+            "key_points": [],
+            "evidence_used": ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8"],
+            "limitations": [],
+        },
+        {"predictions": []},
+        answer_model="answer-model",
+        next_question_model="next-model",
+    )
+
+    assert response["answer_generation"]["evidence_used"] == ["E1", "E2", "E3", "E4", "E5", "E6"]

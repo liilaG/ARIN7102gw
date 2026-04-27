@@ -653,7 +653,8 @@ def load_few_shot_bank(path: Path, *, per_style_per_language: int = 1) -> tuple[
     next_bank: dict[str, list[dict[str, Any]]] = {}
     if not path.exists():
         return answer_bank, next_bank
-    seen: set[tuple[str, str]] = set()
+    seen_counts: dict[tuple[str, str], int] = {}
+    target_count = per_style_per_language * 2 * 5
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
@@ -668,12 +669,12 @@ def load_few_shot_bank(path: Path, *, per_style_per_language: int = 1) -> tuple[
                 continue
             lang = "zh" if _is_zh(str(payload.get("query") or "")) else "en"
             key = (style, lang)
-            if sum(1 for item in seen if item == key) >= per_style_per_language or key in seen:
+            if seen_counts.get(key, 0) >= per_style_per_language:
                 continue
             answer_bank.setdefault(style, []).append(_make_answer_shot_from_record(record))
             next_bank.setdefault(style, []).append(_make_next_question_shot_from_record(record))
-            seen.add(key)
-            if len(seen) >= 10:
+            seen_counts[key] = seen_counts.get(key, 0) + 1
+            if sum(seen_counts.values()) >= target_count:
                 break
     return answer_bank, next_bank
 
@@ -715,19 +716,30 @@ def extract_json_object(text: str) -> dict[str, Any]:
                     "model output was not strict JSON and json-repair is not installed. "
                     "Install project requirements with `pip install -r requirements.txt`."
                 ) from exc
-            repaired = repair_json(candidate)
             try:
+                repaired = repair_json(candidate)
                 parsed = json.loads(repaired)
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    "model output could not be repaired into a valid JSON object"
-                ) from exc
-            if isinstance(parsed, dict):
-                return parsed
+                if isinstance(parsed, dict):
+                    return parsed
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise ValueError(f"model output could not be repaired into JSON: {candidate[:500]}") from exc
     raise ValueError(f"model output did not contain a valid JSON object: {text[:500]}")
 
 
-def normalize_answer(output: dict[str, Any], retrieval_result: dict[str, Any]) -> dict[str, Any]:
+def _trim_answer_text(text: str, *, zh: bool) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    limit = 240 if zh else 520
+    if len(text) <= limit:
+        return text
+    trimmed = text[:limit].rstrip()
+    if zh:
+        boundary = max(trimmed.rfind("。"), trimmed.rfind("；"), trimmed.rfind("！"), trimmed.rfind("？"))
+        return trimmed[: boundary + 1] if boundary >= 80 else trimmed + "..."
+    boundary = max(trimmed.rfind(". "), trimmed.rfind("; "), trimmed.rfind("? "), trimmed.rfind("! "))
+    return trimmed[: boundary + 1] if boundary >= 160 else trimmed + "..."
+
+
+def normalize_answer(output: dict[str, Any], retrieval_result: dict[str, Any], *, zh: bool = False) -> dict[str, Any]:
     docs = retrieval_result.get("documents") if isinstance(retrieval_result, dict) else []
     structured = retrieval_result.get("structured_data") if isinstance(retrieval_result, dict) else []
     fallback_evidence = [
@@ -738,7 +750,7 @@ def normalize_answer(output: dict[str, Any], retrieval_result: dict[str, Any]) -
     answer = {
         "model_status": "real_model",
         "model_name": "",
-        "answer": str(output.get("answer") or "").strip(),
+        "answer": _trim_answer_text(str(output.get("answer") or ""), zh=zh),
         "key_points": output.get("key_points") if isinstance(output.get("key_points"), list) else [],
         "evidence_used": output.get("evidence_used") if isinstance(output.get("evidence_used"), list) else fallback_evidence,
         "limitations": output.get("limitations") if isinstance(output.get("limitations"), list) else [],
@@ -746,10 +758,17 @@ def normalize_answer(output: dict[str, Any], retrieval_result: dict[str, Any]) -
     }
     for key in ("key_points", "evidence_used", "limitations"):
         answer[key] = [str(value).strip() for value in answer[key] if str(value).strip()]
+    if not answer["evidence_used"]:
+        answer["evidence_used"] = fallback_evidence
+    answer["evidence_used"] = answer["evidence_used"][:6]
     if not answer["answer"]:
         raise ValueError("answer model returned empty answer")
     if not answer["risk_disclaimer"]:
-        answer["risk_disclaimer"] = "以上内容仅基于给定证据生成，不构成投资建议或确定性买卖结论。"
+        answer["risk_disclaimer"] = (
+            "以上内容仅基于给定证据生成，不构成投资建议或确定性买卖结论。"
+            if zh
+            else "This answer is based only on the provided evidence and is not investment advice."
+        )
     return answer
 
 
@@ -772,7 +791,7 @@ def normalize_next_questions(output: dict[str, Any], query: str) -> dict[str, An
         except (TypeError, ValueError):
             score_float = 0.9 - index * 0.05
         normalized.append({"question": question, "score": round(score_float, 4), "reason": reason})
-    fallback = "还需要进一步关注哪些数据？" if re.search(r"[\u4e00-\u9fff]", query or "") else "What data should I check next?"
+    fallback = "还需要进一步关注哪些数据？" if _is_zh(query) else "What data should I check next?"
     while len(normalized) < 3:
         normalized.append({"question": fallback, "score": round(0.75 - len(normalized) * 0.05, 4), "reason": "fallback"})
     return {
@@ -780,6 +799,46 @@ def normalize_next_questions(output: dict[str, Any], query: str) -> dict[str, An
         "model_name": "",
         "predictions": normalized[:3],
     }
+
+
+def next_questions_match_language(output: dict[str, Any], query: str) -> bool:
+    expected_zh = _is_zh(query)
+    predictions = output.get("predictions") if isinstance(output.get("predictions"), list) else []
+    questions = [
+        str(item.get("question") if isinstance(item, dict) else item or "").strip()
+        for item in predictions[:3]
+    ]
+    questions = [question for question in questions if question]
+    if not questions:
+        return True
+    return all(_is_zh(question) == expected_zh for question in questions)
+
+
+def make_next_question_language_repair_messages(query: str, output: dict[str, Any]) -> list[dict[str, str]]:
+    target_language = "Chinese" if _is_zh(query) else "English"
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You rewrite next-question predictions into the user's language. "
+                "Return only one valid JSON object with exactly this key: predictions. "
+                "Keep exactly 3 predictions. Preserve the financial meaning, scores, and short reasons. "
+                f"All question strings must be in {target_language}."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "query": query,
+                    "target_language": target_language,
+                    "current_output": output,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        },
+    ]
 
 
 def _model_cache_names(model_id: str) -> list[str]:
@@ -798,14 +857,23 @@ def _model_cache_names(model_id: str) -> list[str]:
 
 
 def _looks_like_hf_model_dir(path: Path) -> bool:
+    return _resolve_hf_model_dir(path) is not None
+
+
+def _resolve_hf_model_dir(path: Path) -> Path | None:
     if not path.is_dir():
-        return False
+        return None
     direct_markers = ("config.json", "tokenizer.json", "tokenizer_config.json", "generation_config.json")
     if any((path / marker).exists() for marker in direct_markers):
-        return True
+        return path
     refs_main = path / "refs" / "main"
     snapshots = path / "snapshots"
-    return refs_main.exists() and snapshots.is_dir()
+    if refs_main.exists() and snapshots.is_dir():
+        snapshot_id = refs_main.read_text(encoding="utf-8").strip()
+        snapshot = snapshots / snapshot_id
+        if snapshot.is_dir() and any((snapshot / marker).exists() for marker in direct_markers):
+            return snapshot
+    return None
 
 
 def resolve_model_path(model_id: str, *, models_dir: Path | None = None) -> str:
@@ -833,9 +901,10 @@ def resolve_model_path(model_id: str, *, models_dir: Path | None = None) -> str:
     for root in list(dict.fromkeys(search_roots)):
         for name in _model_cache_names(model_id):
             candidate = root / name
-            if _looks_like_hf_model_dir(candidate):
-                logger.info("Using cached local model path for %s: %s", model_id, candidate)
-                return str(candidate)
+            resolved = _resolve_hf_model_dir(candidate)
+            if resolved is not None:
+                logger.info("Using cached local model path for %s: %s", model_id, resolved)
+                return str(resolved)
 
     logger.info("No local model directory found for %s; using HuggingFace model id/cache", model_id)
     return model_id
@@ -973,7 +1042,7 @@ def build_frontend_response(
     result = deepcopy(record)
     query = result.get("query") or result.get("raw_query") or (result.get("nlu_result") or {}).get("raw_query") or ""
     retrieval_result = result.get("retrieval_result") if isinstance(result.get("retrieval_result"), dict) else {}
-    answer = normalize_answer(answer_output, retrieval_result)
+    answer = normalize_answer(answer_output, retrieval_result, zh=_is_zh(str(query)))
     answer["model_name"] = answer_model
     next_questions = normalize_next_questions(next_question_output, query)
     next_questions["model_name"] = next_question_model
@@ -1050,6 +1119,15 @@ class LLMResponseRuntime:
             temperature=self.temperature,
             json_retries=self.json_retries,
         )
+        query = str(payload.get("query") or "")
+        if not next_questions_match_language(next_question_output, query):
+            logger.info("Repairing next-question language: model=%s", self.next_question_model_name)
+            next_question_output = self.next_question_model.generate_json(
+                make_next_question_language_repair_messages(query, next_question_output),
+                max_new_tokens=self.next_max_new_tokens,
+                temperature=0,
+                json_retries=self.json_retries,
+            )
         return build_frontend_response(
             record,
             answer_output,
@@ -1111,62 +1189,89 @@ def make_runtime(args: argparse.Namespace) -> LLMResponseRuntime:
 
 
 def run_service(args: argparse.Namespace) -> None:
-    try:
-        import uvicorn
-        from fastapi import FastAPI, HTTPException
-        from pydantic import BaseModel, Field
-    except ImportError as exc:
-        raise SystemExit(
-            "Missing API runtime dependencies. Install the project requirements first: "
-            "pip install -r requirements.txt"
-        ) from exc
+    from http import HTTPStatus
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Lock
 
     runtime = make_runtime(args)
-    app = FastAPI(title="Query Intelligence LLM Response Service")
+    generation_lock = Lock()
 
-    class RespondRequest(BaseModel):
-        query: str | None = Field(default=None, description="Raw query. The service will run Query Intelligence first.")
-        pipeline_result: dict[str, Any] | None = Field(
-            default=None,
-            description="Already computed Query Intelligence pipeline result.",
-        )
-        top_k: int = 20
-        debug: bool = False
-        user_profile: dict[str, Any] = Field(default_factory=dict)
-        dialog_context: list[dict[str, Any]] = Field(default_factory=list)
+    class LLMResponseHandler(BaseHTTPRequestHandler):
+        server_version = "LLMResponseHTTP/1.0"
 
-    @app.get("/health")
-    def health() -> dict[str, Any]:
-        return {
-            "status": "ok",
-            "answer_model": args.answer_model,
-            "next_question_model": args.next_question_model,
-        }
+        def log_message(self, format: str, *args_: Any) -> None:
+            logger.info("HTTP %s - " + format, self.address_string(), *args_)
 
-    @app.post("/respond")
-    def respond(request: RespondRequest) -> dict[str, Any]:
-        try:
-            if request.pipeline_result is not None:
-                record = request.pipeline_result
-            elif request.query:
-                record = build_record_from_query(
-                    request.query.strip(),
-                    top_k=request.top_k,
-                    debug=request.debug,
-                    user_profile=request.user_profile,
-                    dialog_context=request.dialog_context,
-                )
-            else:
-                raise HTTPException(status_code=422, detail="Provide either query or pipeline_result")
-            return runtime.generate(record)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("LLM response request failed")
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        def _send_json(self, status: int, payload: dict[str, Any]) -> None:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _read_json_body(self) -> dict[str, Any]:
+            content_length = int(self.headers.get("Content-Length") or "0")
+            if content_length <= 0:
+                return {}
+            raw = self.rfile.read(content_length)
+            parsed = json.loads(raw.decode("utf-8"))
+            if not isinstance(parsed, dict):
+                raise ValueError("request body must be a JSON object")
+            return parsed
+
+        def do_GET(self) -> None:
+            if self.path != "/health":
+                self._send_json(HTTPStatus.NOT_FOUND, {"detail": "not found"})
+                return
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    "status": "ok",
+                    "answer_model": args.answer_model,
+                    "next_question_model": args.next_question_model,
+                },
+            )
+
+        def do_POST(self) -> None:
+            if self.path != "/respond":
+                self._send_json(HTTPStatus.NOT_FOUND, {"detail": "not found"})
+                return
+            try:
+                request = self._read_json_body()
+                pipeline_result = request.get("pipeline_result")
+                query = request.get("query")
+                if isinstance(pipeline_result, dict):
+                    record = pipeline_result
+                elif query:
+                    record = build_record_from_query(
+                        str(query).strip(),
+                        top_k=int(request.get("top_k") or 20),
+                        debug=bool(request.get("debug") or False),
+                        user_profile=request.get("user_profile") if isinstance(request.get("user_profile"), dict) else {},
+                        dialog_context=request.get("dialog_context") if isinstance(request.get("dialog_context"), list) else [],
+                    )
+                else:
+                    self._send_json(HTTPStatus.UNPROCESSABLE_ENTITY, {"detail": "Provide either query or pipeline_result"})
+                    return
+                with generation_lock:
+                    response = runtime.generate(record)
+                self._send_json(HTTPStatus.OK, response)
+            except json.JSONDecodeError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"detail": f"invalid JSON body: {exc}"})
+            except Exception as exc:
+                logger.exception("LLM response request failed")
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"detail": str(exc)})
 
     logger.info("Starting LLM response service: host=%s port=%d", args.host, args.port)
-    uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())
+    server = ThreadingHTTPServer((args.host, args.port), LLMResponseHandler)
+    try:
+        logger.info("LLM response service listening on http://%s:%d", args.host, args.port)
+        server.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("Stopping LLM response service")
+    finally:
+        server.server_close()
 
 
 def load_record(path: Path) -> dict[str, Any]:
@@ -1204,7 +1309,7 @@ def main() -> None:
     source = parser.add_mutually_exclusive_group(required=False)
     source.add_argument("--input", type=Path, help="Pipeline JSON/JSONL path. Use '-' to read one JSON object from stdin.")
     source.add_argument("--query", help="Run Query Intelligence first, then generate LLM response from that pipeline result.")
-    parser.add_argument("--serve", action="store_true", help="Run a persistent FastAPI service and load models once at startup.")
+    parser.add_argument("--serve", action="store_true", help="Run a persistent HTTP service and load models once at startup.")
     parser.add_argument("--host", default="127.0.0.1", help="Host for --serve mode.")
     parser.add_argument("--port", type=int, default=8010, help="Port for --serve mode.")
     parser.add_argument("--output", type=Path, default=None, help="Optional output JSON path. Omit to print JSON to stdout.")
