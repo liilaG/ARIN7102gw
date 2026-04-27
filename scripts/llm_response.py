@@ -716,7 +716,12 @@ def extract_json_object(text: str) -> dict[str, Any]:
                     "Install project requirements with `pip install -r requirements.txt`."
                 ) from exc
             repaired = repair_json(candidate)
-            parsed = json.loads(repaired)
+            try:
+                parsed = json.loads(repaired)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "model output could not be repaired into a valid JSON object"
+                ) from exc
             if isinstance(parsed, dict):
                 return parsed
     raise ValueError(f"model output did not contain a valid JSON object: {text[:500]}")
