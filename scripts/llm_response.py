@@ -1369,10 +1369,19 @@ def main() -> None:
     args = parser.parse_args()
     if args.json_retries < 0:
         parser.error("--json-retries must be >= 0")
-    if not args.serve and not (args.input or args.query):
+    if not args.serve and args.input is None and args.query is None:
         parser.error("one of --input, --query, or --serve is required")
     if args.serve and (args.input or args.query or args.output):
         parser.error("--serve cannot be combined with --input, --query, or --output")
+    if args.query is not None:
+        try:
+            args.query = coerce_query(args.query)
+        except ValueError as exc:
+            parser.error(str(exc))
+    try:
+        args.top_k = coerce_top_k(args.top_k)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     logging.basicConfig(
         level=getattr(logging, args.log_level),

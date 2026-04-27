@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -336,6 +338,30 @@ def test_coerce_query_rejects_blank_values() -> None:
 
     with pytest.raises(ValueError, match="query must not be blank"):
         coerce_query("   ")
+
+
+def test_cli_rejects_invalid_query_inputs() -> None:
+    root = Path(__file__).resolve().parents[1]
+
+    invalid_top_k = subprocess.run(
+        [sys.executable, "scripts/llm_response.py", "--query", "中国平安最近为什么涨？", "--top-k", "0"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert invalid_top_k.returncode == 2
+    assert "top_k must be greater than 0" in invalid_top_k.stderr
+
+    blank_query = subprocess.run(
+        [sys.executable, "scripts/llm_response.py", "--query", "   "],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert blank_query.returncode == 2
+    assert "query must not be blank" in blank_query.stderr
 
 
 def test_build_frontend_response_adds_llm_sections_without_model_loading() -> None:
