@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import time
+from http.client import RemoteDisconnected
 from pathlib import Path
 
 from query_intelligence.bootstrap_public_data import PublicDataBootstrapper
@@ -297,6 +298,30 @@ class _FakeAkshareModuleStockHistFallsBackToSina(_FakeAkshareModuleStockHistFail
                 "low": 51.8,
                 "close": 53.0,
                 "volume": 1100000.0,
+            }
+        ]
+
+
+class _FakeAkshareModuleTransientDisconnect(_FakeAkshareModule):
+    def __init__(self) -> None:
+        self.calls = 0
+        self.timeouts: list[int | None] = []
+
+    def stock_zh_a_hist(self, symbol: str, period: str, start_date: str, end_date: str, adjust: str, timeout=None):  # noqa: ARG002
+        self.calls += 1
+        self.timeouts.append(timeout)
+        if self.calls == 1:
+            raise RemoteDisconnected("Remote end closed connection without response")
+        return [
+            {
+                "日期": "2026-04-22",
+                "开盘": 57.0,
+                "最高": 58.0,
+                "最低": 56.5,
+                "收盘": 57.7,
+                "涨跌幅": 1.2,
+                "成交量": 1000000.0,
+                "成交额": 57000000.0,
             }
         ]
 
@@ -827,6 +852,21 @@ def test_akshare_market_provider_falls_back_to_direct_sina_quote(monkeypatch) ->
     assert result["payload"]["trade_date"] == "2026-04-24"
     assert result["payload"]["close"] == 57.77
     assert result["payload"]["pct_change_1d"] == -0.19
+
+
+def test_akshare_market_provider_retries_transient_eastmoney_disconnect() -> None:
+    ak_module = _FakeAkshareModuleTransientDisconnect()
+    provider = AKShareMarketProvider(ak_module=ak_module, timeout=3, max_retries=1, retry_backoff_seconds=0)
+
+    result = provider.fetch_bundle(symbol="601318.SH", canonical_name="中国平安", product_type="stock")
+
+    assert ak_module.calls == 2
+    assert ak_module.timeouts == [3, 3]
+    assert result["source_name"] == "akshare"
+    assert result["payload"]["close"] == 57.7
+    assert result["status"] == "degraded"
+    assert any("akshare.stock_zh_a_hist_retry_succeeded" in warning for warning in result["provider_warnings"])
+    assert any("akshare.stock_zh_a_hist_retry_succeeded" in warning for warning in result["payload"]["provider_warnings"])
 
 
 def test_efinance_etf_provider_normalizes_history_payloads() -> None:

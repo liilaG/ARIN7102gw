@@ -94,7 +94,7 @@ class RetrievalPipeline:
             market_provider = TushareMarketProvider.from_token(settings.tushare_token)
             api_retriever = APIRetriever(load_structured_data())
         elif settings.use_live_market:
-            market_provider = AKShareMarketProvider.from_import()
+            market_provider = AKShareMarketProvider.from_import(timeout=settings.request_timeout_seconds)
             api_retriever = APIRetriever(load_structured_data())
         else:
             structured = load_structured_data()
@@ -198,6 +198,7 @@ class RetrievalPipeline:
         live_industry_items: list[dict] = []
         live_fund_items: list[dict] = []
         live_index_items: list[dict] = []
+        live_provider_warning_items: list[dict] = []
         live_symbols: set[str] = set()
         live_fundamental_symbols: set[str] = set()
         live_industry_names: set[str] = set()
@@ -218,6 +219,7 @@ class RetrievalPipeline:
                     )
             except Exception as exc:
                 logger.warning("Market provider fetch failed for %s: %s", symbol, exc)
+                live_provider_warning_items.append(self._build_live_provider_warning_item(symbol, exc))
                 continue
 
             live_symbols.add(symbol)
@@ -276,7 +278,23 @@ class RetrievalPipeline:
             if item["source_type"] == "industry_sql" and payload.get("industry_name") in live_industry_names:
                 continue
             filtered_items.append(item)
-        return live_price_items + live_fund_items + live_index_items + filtered_items + live_fundamental_items + live_industry_items
+        return live_price_items + live_fund_items + live_index_items + live_provider_warning_items + filtered_items + live_fundamental_items + live_industry_items
+
+    def _build_live_provider_warning_item(self, symbol: str, exc: Exception) -> dict:
+        text = str(exc).strip().replace("\n", " ")
+        if len(text) > 180:
+            text = text[:177] + "..."
+        warning = f"market_provider_fetch_failed:{symbol}:{type(exc).__name__}:{text}"
+        return {
+            "evidence_id": f"market_provider_warning_{symbol}",
+            "source_type": "provider_warning",
+            "source_name": type(self.market_provider).__name__ if self.market_provider else "market_provider",
+            "provider": type(self.market_provider).__name__ if self.market_provider else "market_provider",
+            "payload": {
+                "symbol": symbol,
+                "provider_warnings": [warning],
+            },
+        }
 
     def _requested_live_structured_sources(self, query_bundle: dict) -> set[str]:
         requested = set(query_bundle.get("source_plan", [])).intersection(

@@ -95,6 +95,29 @@ def _sample_record(question_style: str = "why") -> dict:
     }
 
 
+def _out_of_scope_record() -> dict:
+    return {
+        "status": "ok",
+        "query": "今天天气怎么样？",
+        "nlu_result": {
+            "query_id": "Q-weather",
+            "question_style": "fact",
+            "product_type": {"label": "out_of_scope", "score": 0.93},
+            "intent_labels": [],
+            "entities": [],
+            "source_plan": [],
+            "risk_flags": ["out_of_scope_query"],
+        },
+        "retrieval_result": {
+            "query_id": "Q-weather",
+            "retrieval_confidence": 0.0,
+            "warnings": ["out_of_scope_query"],
+            "documents": [],
+            "structured_data": [],
+        },
+    }
+
+
 def test_compact_payload_uses_evidence_summary_and_sanitizes_source_generation_terms() -> None:
     payload = compact_payload(_sample_record())
     dumped = json.dumps(payload, ensure_ascii=False).lower()
@@ -524,3 +547,162 @@ def test_build_frontend_response_caps_evidence_used() -> None:
     )
 
     assert response["answer_generation"]["evidence_used"] == ["E1", "E2", "E3", "E4", "E5", "E6"]
+
+
+def test_build_frontend_response_overrides_out_of_scope_next_questions() -> None:
+    response = build_frontend_response(
+        _out_of_scope_record(),
+        {
+            "answer": "今天有雨，建议带伞。",
+            "key_points": ["天气预报"],
+            "evidence_used": ["weather-1"],
+            "limitations": [],
+            "risk_disclaimer": "",
+        },
+        {
+            "predictions": [
+                {"question": "明天天气怎么样？", "score": 0.9, "reason": "weather_followup"},
+                {"question": "今天气温多少度？", "score": 0.8, "reason": "weather_followup"},
+                {"question": "今天会下雨吗？", "score": 0.7, "reason": "weather_followup"},
+            ]
+        },
+        answer_model="answer-model",
+        next_question_model="next-model",
+    )
+
+    assert response["answer_generation"]["model_status"] == "deterministic_guardrail"
+    assert "金融" in response["answer_generation"]["answer"]
+    assert "带伞" not in response["answer_generation"]["answer"]
+    assert response["answer_generation"]["evidence_used"] == []
+    questions = [item["question"] for item in response["next_question_prediction"]["predictions"]]
+    assert response["next_question_prediction"]["model_status"] == "deterministic_guardrail"
+    assert len(questions) == 3
+    assert all("天气" not in question and "气温" not in question and "下雨" not in question for question in questions)
+    assert any("证据" in question or "数据" in question or "金融" in question for question in questions)
+
+
+def test_build_frontend_response_marks_advice_with_low_confidence_as_conditional() -> None:
+    record = _sample_record(question_style="advice")
+    record["query"] = "茅台今天为什么跌？后面还值得拿吗？"
+    record["nlu_result"]["question_style"] = "advice"
+    record["nlu_result"]["risk_flags"] = ["investment_advice_like"]
+    record["retrieval_result"]["retrieval_confidence"] = 0.32
+    record["retrieval_result"]["warnings"] = ["announcement_not_found_recent_window"]
+
+    response = build_frontend_response(
+        record,
+        {
+            "answer": "茅台仍然值得继续持有，主要原因是基本面稳健。",
+            "key_points": ["基本面稳健"],
+            "evidence_used": [],
+            "limitations": [],
+            "risk_disclaimer": "不构成投资建议。",
+        },
+        {"predictions": []},
+        answer_model="answer-model",
+        next_question_model="next-model",
+    )
+
+    answer = response["answer_generation"]
+    assert answer["answer"].startswith("基于当前证据只能做条件性判断")
+    assert "不能据此给出确定的买入、卖出或持有建议" in answer["answer"]
+    assert "announcement_not_found_recent_window" in answer["limitations"]
+    assert "检索置信度较低" in answer["limitations"]
+    assert "买卖建议" in answer["risk_disclaimer"]
+
+
+def test_build_frontend_response_softens_weak_evidence_causal_claims() -> None:
+    record = _sample_record(question_style="why")
+    record["query"] = "沪深300最近为什么跌？"
+    record["nlu_result"]["question_style"] = "why"
+    record["nlu_result"]["risk_flags"] = []
+    record["retrieval_result"]["retrieval_confidence"] = 0.3
+    record["retrieval_result"]["warnings"] = []
+    record["retrieval_result"]["coverage"] = {
+        "price": True,
+        "news": False,
+        "announcement": False,
+        "macro": True,
+    }
+
+    response = build_frontend_response(
+        record,
+        {
+            "answer": "沪深300下跌的主要原因是宏观数据走弱，资金流出导致指数回落。",
+            "key_points": ["宏观走弱", "资金流出"],
+            "evidence_used": [],
+            "limitations": [],
+            "risk_disclaimer": "不构成投资建议。",
+        },
+        {"predictions": []},
+        answer_model="answer-model",
+        next_question_model="next-model",
+    )
+
+    answer = response["answer_generation"]
+    assert answer["answer"].startswith("现有证据不足以把结果归因于单一原因")
+    assert "主要原因是" not in answer["answer"]
+    assert "资金流出导致" not in answer["answer"]
+    assert "可能相关的因素包括" in answer["answer"]
+    assert "缺少实时成交、资金流或公告等验证" in answer["limitations"]
+
+
+def test_build_frontend_response_degrades_comparison_judgment_answers() -> None:
+    record = _sample_record(question_style="compare")
+    record["query"] = "贵州茅台和五粮液哪个好"
+    record["nlu_result"]["question_style"] = "compare"
+    record["nlu_result"]["risk_flags"] = []
+    record["retrieval_result"]["retrieval_confidence"] = 0.39
+    record["retrieval_result"]["warnings"] = ["announcement_not_found_recent_window"]
+
+    response = build_frontend_response(
+        record,
+        {
+            "answer": "贵州茅台更好，更适合长期持有。",
+            "key_points": ["贵州茅台更好"],
+            "evidence_used": [],
+            "limitations": [],
+            "risk_disclaimer": "不构成投资建议。",
+        },
+        {"predictions": []},
+        answer_model="answer-model",
+        next_question_model="next-model",
+    )
+
+    answer = response["answer_generation"]
+    assert answer["answer"].startswith("当前证据不足以直接判断哪个更好")
+    assert "贵州茅台更好" not in answer["answer"]
+    assert "适合长期持有" not in answer["answer"]
+    assert "分维度比较" in answer["answer"]
+    assert "检索置信度较低" in answer["limitations"]
+
+
+def test_build_frontend_response_replaces_direct_trading_next_questions() -> None:
+    record = _sample_record(question_style="advice")
+    record["query"] = "茅台今天为什么跌？后面还值得拿吗？"
+    record["nlu_result"]["question_style"] = "advice"
+    record["nlu_result"]["risk_flags"] = ["investment_advice_like"]
+
+    response = build_frontend_response(
+        record,
+        {
+            "answer": "需要谨慎评估。",
+            "key_points": [],
+            "evidence_used": [],
+            "limitations": [],
+            "risk_disclaimer": "不构成投资建议。",
+        },
+        {
+            "predictions": [
+                {"question": "茅台现在买入还是继续持有？", "score": 0.9, "reason": "trading_followup"},
+                {"question": "茅台什么时候卖出比较好？", "score": 0.8, "reason": "trading_followup"},
+                {"question": "白酒行业整体表现如何？", "score": 0.7, "reason": "sector_followup"},
+            ]
+        },
+        answer_model="answer-model",
+        next_question_model="next-model",
+    )
+
+    questions = [item["question"] for item in response["next_question_prediction"]["predictions"]]
+    assert all("买入" not in question and "卖出" not in question and "继续持有" not in question for question in questions)
+    assert any("风险" in question or "证据" in question or "条件" in question for question in questions)

@@ -667,6 +667,11 @@ class _FakeMarketProvider:
         }
 
 
+class _FailingMarketProvider:
+    def fetch_bundle(self, symbol: str, canonical_name: str | None = None, product_type: str | None = None, start_date: str | None = None, end_date: str | None = None) -> dict:  # noqa: ARG002
+        raise ConnectionError("Remote end closed connection without response")
+
+
 class _FakeNewsProvider:
     def fetch_news(self, symbol: str, canonical_name: str, limit: int) -> list[dict]:  # noqa: ARG002
         return [
@@ -748,6 +753,32 @@ def test_live_retrieval_fetches_all_symbols_for_comparison_queries() -> None:
         "announcement_600519.SH",
         "announcement_000858.SZ",
     }
+
+
+def test_live_market_provider_failure_is_returned_as_structured_warning() -> None:
+    pipeline = RetrievalPipeline.build_demo()
+    pipeline.market_provider = _FailingMarketProvider()
+    query_bundle = {
+        "query_id": "q_provider_failure",
+        "normalized_query": "贵州茅台今天股价",
+        "keywords": [],
+        "entity_names": ["贵州茅台"],
+        "symbols": ["600519.SH"],
+        "industry_terms": [],
+        "source_plan": ["market_api"],
+        "product_type": "stock",
+        "intent_labels": ["price_query"],
+        "topic_labels": [],
+        "time_scope": "today",
+    }
+
+    structured_items = pipeline._fetch_structured_items(query_bundle)
+
+    warning_item = next(item for item in structured_items if item["source_type"] == "provider_warning")
+    assert warning_item["payload"]["symbol"] == "600519.SH"
+    assert warning_item["payload"]["provider_warnings"] == [
+        "market_provider_fetch_failed:600519.SH:ConnectionError:Remote end closed connection without response"
+    ]
 
 
 def test_announcement_timeout_does_not_permanently_disable_future_fetches() -> None:
@@ -961,3 +992,37 @@ def test_research_note_without_url_gets_stable_dataset_reference() -> None:
     )
 
     assert result["documents"][0]["source_url"] == "dataset://fir_bench_reports/abc"
+
+
+def test_retrieval_packager_exposes_live_market_provider_warnings() -> None:
+    result = RetrievalPackager().build(
+        nlu_result={
+            "query_id": "provider-warning-test",
+            "product_type": {"label": "stock"},
+            "intent_labels": [],
+            "entities": [],
+            "source_plan": ["market_api"],
+            "risk_flags": [],
+        },
+        ranked_docs=[],
+        structured_items=[
+            {
+                "evidence_id": "price_601318.SH",
+                "source_type": "market_api",
+                "source_name": "akshare",
+                "payload": {
+                    "symbol": "601318.SH",
+                    "source_name": "akshare",
+                    "close": 57.7,
+                    "provider_warnings": [
+                        "akshare.stock_zh_a_hist_retry_succeeded:RemoteDisconnected:Remote end closed connection without response"
+                    ],
+                },
+            }
+        ],
+        groups=[],
+        total_candidates=0,
+        executed_sources=["market_api"],
+    )
+
+    assert "akshare.stock_zh_a_hist_retry_succeeded:RemoteDisconnected:Remote end closed connection without response" in result["warnings"]

@@ -104,6 +104,11 @@ class RetrievalPackager:
             warnings.append("clarification_required_missing_entity")
         if "announcement" in nlu_result.get("source_plan", []) and not coverage["announcement"]:
             warnings.append("announcement_not_found_recent_window")
+        for item in structured_data:
+            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+            for warning in payload.get("provider_warnings") or []:
+                if warning not in warnings:
+                    warnings.append(str(warning))
 
         ranked_ids = [item["evidence_id"] for item in document_items[:5]]
         confidence = round(

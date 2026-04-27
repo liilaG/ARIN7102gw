@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import inspect
+import logging
+import time
 from dataclasses import dataclass
 from datetime import date, datetime
 from urllib.parse import urlencode
@@ -7,6 +10,9 @@ from urllib.parse import urlencode
 import requests
 
 from .efinance_provider import EFinanceETFProvider
+
+
+logger = logging.getLogger(__name__)
 
 
 def _rows_to_records(rows):
@@ -23,16 +29,25 @@ def _rows_to_records(rows):
 class AKShareMarketProvider:
     ak_module: object
     efinance_provider: EFinanceETFProvider | None = None
+    timeout: int = 15
+    max_retries: int = 1
+    retry_backoff_seconds: float = 0.25
 
     @classmethod
-    def from_import(cls) -> "AKShareMarketProvider":
+    def from_import(cls, *, timeout: int = 15, max_retries: int = 1, retry_backoff_seconds: float = 0.25) -> "AKShareMarketProvider":
         import akshare as ak
 
-        return cls(ak_module=ak, efinance_provider=EFinanceETFProvider.from_import())
+        return cls(
+            ak_module=ak,
+            efinance_provider=EFinanceETFProvider.from_import(),
+            timeout=timeout,
+            max_retries=max_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+        )
 
     def fetch_bundle(self, symbol: str, canonical_name: str, product_type: str, start_date: str = "20250101", end_date: str = "20261231") -> dict:
         plain_symbol = symbol.split(".")[0]
-        market_rows, market_source_name = self._fetch_market_rows(plain_symbol, product_type, start_date, end_date)
+        market_rows, market_source_name, provider_warnings = self._fetch_market_rows(plain_symbol, product_type, start_date, end_date)
         latest = market_rows[0] if market_rows else {}
         is_fund_product = product_type in {"etf", "fund"}
         is_index_product = product_type == "index"
@@ -62,6 +77,8 @@ class AKShareMarketProvider:
             "history": market_rows[:30],
             "industry_name": industry_name,
         }
+        if provider_warnings:
+            payload["provider_warnings"] = provider_warnings
         if industry_payload:
             payload["industry_snapshot"] = industry_payload
 
@@ -70,13 +87,14 @@ class AKShareMarketProvider:
             "source_name": market_source_name,
             "payload": payload,
             "fundamental_payload": fundamental_payload,
+            "provider_warnings": provider_warnings,
             "request_trace": {
                 "symbol": symbol,
                 "product_type": product_type,
                 "start_date": start_date,
                 "end_date": end_date,
             },
-            "status": "ok",
+            "status": "degraded" if provider_warnings or not market_rows else "ok",
         }
         bundle.update(fund_payloads)
         bundle.update(index_payloads)
@@ -135,22 +153,32 @@ class AKShareMarketProvider:
             return "sina"
         return "akshare"
 
-    def _fetch_market_rows(self, symbol: str, product_type: str, start_date: str, end_date: str) -> tuple[list[dict], str]:
+    def _fetch_market_rows(self, symbol: str, product_type: str, start_date: str, end_date: str) -> tuple[list[dict], str, list[str]]:
+        provider_warnings: list[str] = []
         if product_type == "etf":
-            rows = self._fetch_etf_rows(symbol, start_date, end_date)
+            rows = self._fetch_etf_rows(symbol, start_date, end_date, provider_warnings)
             source_name = "akshare"
         elif product_type == "fund":
-            rows = self._fetch_fund_rows(symbol)
+            rows = self._fetch_fund_rows(symbol, provider_warnings)
             source_name = "akshare"
         elif product_type == "index":
-            rows = self._fetch_index_rows(symbol, start_date, end_date)
+            rows = self._fetch_index_rows(symbol, start_date, end_date, provider_warnings)
             source_name = "akshare"
         else:
             try:
-                rows = self.ak_module.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="")
+                rows = self._call_akshare(
+                    "akshare.stock_zh_a_hist",
+                    "stock_zh_a_hist",
+                    provider_warnings,
+                    symbol=symbol,
+                    period="daily",
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust="",
+                )
                 source_name = "akshare"
             except Exception:
-                rows, source_name = self._fetch_stock_rows_fallback(symbol, start_date, end_date)
+                rows, source_name = self._fetch_stock_rows_fallback(symbol, start_date, end_date, provider_warnings)
         records = _rows_to_records(rows)
         normalized = []
         for row in records:
@@ -174,12 +202,59 @@ class AKShareMarketProvider:
                 normalized[-1]["pct_change_1d"] = row.get("日增长率") if row.get("日增长率") is not None else row.get("pct_change")
         normalized.sort(key=lambda item: item.get("trade_date") or "", reverse=True)
         self._fill_missing_pct_change(normalized)
-        return normalized, source_name
+        if not normalized:
+            provider_warnings.append(f"market_provider_empty_rows:{source_name}:{symbol}")
+        return normalized, source_name, list(dict.fromkeys(provider_warnings))
 
-    def _fetch_stock_rows_fallback(self, symbol: str, start_date: str, end_date: str) -> tuple[object, str]:
+    def _call_akshare(self, endpoint: str, method_name: str, provider_warnings: list[str], **kwargs):
+        fn = getattr(self.ak_module, method_name)
+        call_kwargs = dict(kwargs)
+        if self._accepts_timeout(fn):
+            call_kwargs["timeout"] = self.timeout
+        return self._call_with_retry(endpoint, lambda: fn(**call_kwargs), provider_warnings)
+
+    def _call_with_retry(self, endpoint: str, operation, provider_warnings: list[str]):
+        attempts = max(1, self.max_retries + 1)
+        last_error: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                result = operation()
+                if attempt > 0 and last_error is not None:
+                    provider_warnings.append(f"{endpoint}_retry_succeeded:{self._error_summary(last_error)}")
+                return result
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if attempt >= attempts - 1:
+                    provider_warnings.append(f"{endpoint}_failed:{self._error_summary(exc)}")
+                    logger.warning("Live provider endpoint failed: endpoint=%s error=%s", endpoint, exc)
+                    raise
+                if self.retry_backoff_seconds > 0:
+                    time.sleep(self.retry_backoff_seconds * (attempt + 1))
+        raise RuntimeError(f"{endpoint} failed without error detail")
+
+    def _accepts_timeout(self, fn) -> bool:
+        try:
+            signature = inspect.signature(fn)
+        except (TypeError, ValueError):
+            return False
+        return "timeout" in signature.parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+
+    def _error_summary(self, exc: Exception) -> str:
+        text = str(exc).strip().replace("\n", " ")
+        if len(text) > 180:
+            text = text[:177] + "..."
+        return f"{type(exc).__name__}:{text}"
+
+    def _fetch_stock_rows_fallback(self, symbol: str, start_date: str, end_date: str, provider_warnings: list[str]) -> tuple[object, str]:
         prefixed_symbol = f"sh{symbol}" if symbol.startswith(("5", "6")) else f"sz{symbol}"
         try:
-            return self.ak_module.stock_zh_a_daily(
+            return self._call_akshare(
+                "akshare.stock_zh_a_daily",
+                "stock_zh_a_daily",
+                provider_warnings,
                 symbol=prefixed_symbol,
                 start_date=start_date,
                 end_date=end_date,
@@ -189,21 +264,29 @@ class AKShareMarketProvider:
             pass
 
         try:
-            return [self._fetch_sina_realtime_row(symbol)], "sina_quote"
+            return [self._fetch_sina_realtime_row(symbol, provider_warnings)], "sina_quote"
         except Exception:
             pass
 
         if self.efinance_provider is None:
             raise RuntimeError(f"stock history fetch failed for {symbol}")
-        payload = self.efinance_provider.fetch_stock_history(f"{symbol}.SH" if symbol.startswith(("5", "6")) else f"{symbol}.SZ")
+        payload = self._call_with_retry(
+            "efinance.stock.get_quote_history",
+            lambda: self.efinance_provider.fetch_stock_history(f"{symbol}.SH" if symbol.startswith(("5", "6")) else f"{symbol}.SZ"),
+            provider_warnings,
+        )
         return payload["payload"].get("history", []), payload.get("source_name", "efinance")
 
-    def _fetch_sina_realtime_row(self, symbol: str) -> dict:
+    def _fetch_sina_realtime_row(self, symbol: str, provider_warnings: list[str]) -> dict:
         prefixed_symbol = f"sh{symbol}" if symbol.startswith(("5", "6")) else f"sz{symbol}"
-        response = requests.get(
-            f"https://hq.sinajs.cn/list={prefixed_symbol}",
-            headers={"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"},
-            timeout=10,
+        response = self._call_with_retry(
+            "sina.hq_sinajs_cn",
+            lambda: requests.get(
+                f"https://hq.sinajs.cn/list={prefixed_symbol}",
+                headers={"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"},
+                timeout=self.timeout,
+            ),
+            provider_warnings,
         )
         response.raise_for_status()
         _, payload = response.text.split("=", 1)
@@ -226,33 +309,46 @@ class AKShareMarketProvider:
             "amount": self._to_float(fields[9]),
         }
 
-    def _fetch_etf_rows(self, symbol: str, start_date: str, end_date: str):
+    def _fetch_etf_rows(self, symbol: str, start_date: str, end_date: str, provider_warnings: list[str]):
         try:
-            return self.ak_module.fund_etf_hist_em(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="")
+            return self._call_akshare(
+                "akshare.fund_etf_hist_em",
+                "fund_etf_hist_em",
+                provider_warnings,
+                symbol=symbol,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust="",
+            )
         except Exception:
             pass
 
         try:
             prefixed_symbol = f"sh{symbol}" if symbol.startswith(("5", "6")) else f"sz{symbol}"
-            rows = self.ak_module.fund_etf_hist_sina(symbol=prefixed_symbol)
+            rows = self._call_akshare("akshare.fund_etf_hist_sina", "fund_etf_hist_sina", provider_warnings, symbol=prefixed_symbol)
             if rows is not None:
                 return rows
         except Exception:
             pass
 
         if self.efinance_provider is not None:
-            payload = self.efinance_provider.fetch_history(f"{symbol}.SH" if symbol.startswith(("5", "6")) else f"{symbol}.SZ")
+            payload = self._call_with_retry(
+                "efinance.fund.get_quote_history",
+                lambda: self.efinance_provider.fetch_history(f"{symbol}.SH" if symbol.startswith(("5", "6")) else f"{symbol}.SZ"),
+                provider_warnings,
+            )
             return payload["payload"].get("history", [])
 
         raise RuntimeError(f"ETF history fetch failed for {symbol}")
 
-    def _fetch_fund_rows(self, symbol: str):
+    def _fetch_fund_rows(self, symbol: str, provider_warnings: list[str]):
         if not hasattr(self.ak_module, "fund_open_fund_info_em"):
             return []
         try:
-            return self.ak_module.fund_open_fund_info_em(symbol=symbol, indicator="单位净值走势")
+            return self._call_akshare("akshare.fund_open_fund_info_em", "fund_open_fund_info_em", provider_warnings, symbol=symbol, indicator="单位净值走势")
         except TypeError:
-            return self.ak_module.fund_open_fund_info_em(symbol=symbol)
+            return self._call_akshare("akshare.fund_open_fund_info_em", "fund_open_fund_info_em", provider_warnings, symbol=symbol)
 
     def _prefixed_index_symbol(self, symbol: str) -> str:
         """Return Sina-style prefixed symbol for index APIs (sh000001 / sz399001)."""
@@ -261,7 +357,7 @@ class AKShareMarketProvider:
             return f"sh{plain}"
         return f"sz{plain}"
 
-    def _fetch_index_rows(self, symbol: str, start_date: str, end_date: str):
+    def _fetch_index_rows(self, symbol: str, start_date: str, end_date: str, provider_warnings: list[str]):
         prefixed = self._prefixed_index_symbol(symbol)
         for method_name, kwargs in (
             ("stock_zh_index_daily", {"symbol": prefixed}),
@@ -270,11 +366,12 @@ class AKShareMarketProvider:
         ):
             if not hasattr(self.ak_module, method_name):
                 continue
+            endpoint = f"akshare.{method_name}"
             try:
-                rows = _rows_to_records(getattr(self.ak_module, method_name)(**kwargs))
+                rows = _rows_to_records(self._call_akshare(endpoint, method_name, provider_warnings, **kwargs))
             except TypeError:
                 try:
-                    rows = _rows_to_records(getattr(self.ak_module, method_name)(symbol=symbol))
+                    rows = _rows_to_records(self._call_akshare(endpoint, method_name, provider_warnings, symbol=symbol))
                 except Exception:
                     continue
             except Exception:
