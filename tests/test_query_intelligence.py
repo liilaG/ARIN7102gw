@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import time
+from threading import Barrier, Thread
 from pathlib import Path
 
 import jsonschema
@@ -251,6 +253,13 @@ def test_retrieval_returns_mixed_evidence_and_coverage() -> None:
     assert any(item["source_type"] == "market_api" for item in result["structured_data"])
     assert "announcement_not_found_recent_window" in result["warnings"]
     assert result["debug_trace"]["candidate_count"] >= result["debug_trace"]["after_dedup"]
+
+    summary = result.get("analysis_summary")
+    assert isinstance(summary, dict)
+    readiness = summary.get("data_readiness")
+    assert isinstance(readiness, dict)
+    assert isinstance(readiness.get("has_news"), bool)
+    assert isinstance(readiness.get("has_price_data"), bool)
 
 
 def test_nlu_uses_dialog_context_for_follow_up_query() -> None:
@@ -615,6 +624,27 @@ class _FakeNewsProvider:
         ]
 
 
+class _RecoveringAnnouncementProvider:
+    timeout = 0
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def fetch_announcements(self, symbol: str, limit: int) -> list[dict]:  # noqa: ARG002
+        self.calls += 1
+        if self.calls == 1:
+            time.sleep(5.5)
+            return []
+        return [
+            {
+                "evidence_id": f"announcement_{symbol}",
+                "source_type": "announcement",
+                "title": symbol,
+                "entity_symbols": [symbol],
+            }
+        ]
+
+
 class _FakeAnnouncementProvider:
     def fetch_announcements(self, symbol: str, limit: int) -> list[dict]:  # noqa: ARG002
         return [
@@ -663,6 +693,96 @@ def test_live_retrieval_fetches_all_symbols_for_comparison_queries() -> None:
         "announcement_600519.SH",
         "announcement_000858.SZ",
     }
+
+
+def test_announcement_timeout_does_not_permanently_disable_future_fetches() -> None:
+    pipeline = RetrievalPipeline.build_demo()
+    provider = _RecoveringAnnouncementProvider()
+    pipeline.announcement_provider = provider
+    pipeline._announcement_cooldown_seconds = 0.05
+
+    query_bundle = {
+        "query_id": "q1",
+        "normalized_query": "贵州茅台公告",
+        "keywords": [],
+        "entity_names": ["贵州茅台"],
+        "symbols": ["600519.SH"],
+        "industry_terms": [],
+        "source_plan": ["announcement"],
+        "product_type": "stock",
+    }
+
+    docs_first = pipeline._fetch_live_docs(query_bundle, top_k=5)
+    docs_during_cooldown = pipeline._fetch_live_docs(query_bundle, top_k=5)
+
+    assert docs_first == []
+    assert docs_during_cooldown == []
+    assert provider.calls == 1
+    assert pipeline._announcement_retry_after_monotonic > 0
+
+    time.sleep(0.06)
+    while pipeline._announcement_stuck_worker and pipeline._announcement_stuck_worker.is_alive():
+        time.sleep(0.05)
+
+    docs_after_recovery = pipeline._fetch_live_docs(query_bundle, top_k=5)
+
+    assert provider.calls == 2
+    assert {item["evidence_id"] for item in docs_after_recovery} == {"announcement_600519.SH"}
+
+
+class _ConcurrentAnnouncementProvider:
+    timeout = 10
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def fetch_announcements(self, symbol: str, limit: int) -> list[dict]:  # noqa: ARG002
+        self.calls += 1
+        time.sleep(0.2)
+        return [
+            {
+                "evidence_id": f"announcement_{symbol}",
+                "source_type": "announcement",
+                "title": symbol,
+                "entity_symbols": [symbol],
+            }
+        ]
+
+
+def test_concurrent_requests_allow_only_one_inflight_announcement_fetch() -> None:
+    pipeline = RetrievalPipeline.build_demo()
+    provider = _ConcurrentAnnouncementProvider()
+    pipeline.announcement_provider = provider
+
+    query_bundle = {
+        "query_id": "q_concurrent",
+        "normalized_query": "贵州茅台公告",
+        "keywords": [],
+        "entity_names": ["贵州茅台"],
+        "symbols": ["600519.SH"],
+        "industry_terms": [],
+        "source_plan": ["announcement"],
+        "product_type": "stock",
+    }
+
+    start_barrier = Barrier(3)
+    results: list[list[dict]] = []
+
+    def _runner() -> None:
+        start_barrier.wait()
+        docs = pipeline._fetch_live_docs(query_bundle, top_k=5)
+        results.append(docs)
+
+    t1 = Thread(target=_runner)
+    t2 = Thread(target=_runner)
+    t1.start()
+    t2.start()
+    start_barrier.wait()
+    t1.join()
+    t2.join()
+
+    assert provider.calls == 1
+    assert sum(1 for docs in results if docs) == 1
 
 
 @pytest.mark.parametrize("case", QUERY_CASES, ids=[case["id"] for case in QUERY_CASES])

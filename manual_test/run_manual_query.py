@@ -12,6 +12,7 @@ from unittest.mock import patch
 os.environ.setdefault("QI_USE_LIVE_MARKET", "1")
 os.environ.setdefault("QI_USE_LIVE_MACRO", "1")
 os.environ.setdefault("QI_USE_LIVE_NEWS", "1")
+os.environ.setdefault("QI_USE_LIVE_ANNOUNCEMENT", "0")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:

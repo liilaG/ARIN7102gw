@@ -77,7 +77,7 @@ class MarketAnalyzer:
             "data_readiness": {},
         }
 
-        market_signals: list[dict] = []
+        market_signal_by_key: dict[str, dict[str, Any]] = {}
         fundamental_signals: list[dict] = []
 
         for item in structured_items:
@@ -86,7 +86,13 @@ class MarketAnalyzer:
             analysis = payload.get("_market_analysis")
 
             if source_type in {"market_api", "index_daily"} and analysis:
-                market_signals.append(self._summarize_market_signal(payload, analysis))
+                signal = self._summarize_market_signal(payload, analysis)
+                signal_key = str(signal.get("symbol") or signal.get("canonical_name") or "")
+                if not signal_key:
+                    signal_key = f"__market_signal_{len(market_signal_by_key)}"
+                existing = market_signal_by_key.get(signal_key)
+                if existing is None or source_type == "market_api":
+                    market_signal_by_key[signal_key] = signal
             elif source_type == "fundamental_sql":
                 fundamental_signals.append(self._summarize_fundamental_signal(payload))
             elif source_type in {"macro_sql", "macro_indicator"}:
@@ -99,6 +105,8 @@ class MarketAnalyzer:
         # Compute macro overall direction
         if summary["macro_signal"] and summary["macro_signal"]["indicators"]:
             summary["macro_signal"]["overall"] = self._macro_overall(summary["macro_signal"]["indicators"])
+
+        market_signals = list(market_signal_by_key.values())
 
         # Assign market/fundamental signals (single → object, multi → list)
         if len(market_signals) == 1:
@@ -157,6 +165,8 @@ class MarketAnalyzer:
         losses = [-d if d < 0 else 0 for d in deltas[-period:]]
         avg_gain = sum(gains) / period
         avg_loss = sum(losses) / period
+        if avg_gain == 0 and avg_loss == 0:
+            return 50.0
         if avg_loss == 0:
             return 50.0 if avg_gain == 0 else 100.0
         rs = avg_gain / avg_loss
@@ -255,19 +265,19 @@ class MarketAnalyzer:
         if ma5 is not None:
             if latest > ma5:
                 bullish_signals += 1
-            else:
+            elif latest < ma5:
                 bearish_signals += 1
         if ma20 is not None:
             if latest > ma20:
                 bullish_signals += 1
-            else:
+            elif latest < ma20:
                 bearish_signals += 1
 
         # MA cross
         if ma5 is not None and ma20 is not None:
             if ma5 > ma20:
                 bullish_signals += 1
-            else:
+            elif ma5 < ma20:
                 bearish_signals += 1
 
         # RSI
@@ -293,6 +303,24 @@ class MarketAnalyzer:
     # --- Signal Summaries for Downstream ---
 
     @staticmethod
+    def _to_float(value: Any) -> float | None:
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            text = value.strip().replace(",", "")
+            if not text:
+                return None
+            if text.endswith("%"):
+                text = text[:-1]
+            try:
+                return float(text)
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
     def _summarize_market_signal(payload: dict, analysis: dict) -> dict[str, Any]:
         return {
             "symbol": payload.get("symbol"),
@@ -313,9 +341,9 @@ class MarketAnalyzer:
 
     @staticmethod
     def _summarize_fundamental_signal(payload: dict) -> dict[str, Any]:
-        pe_ttm = payload.get("pe_ttm")
-        pb = payload.get("pb")
-        roe = payload.get("roe")
+        pe_ttm = MarketAnalyzer._to_float(payload.get("pe_ttm"))
+        pb = MarketAnalyzer._to_float(payload.get("pb"))
+        roe = MarketAnalyzer._to_float(payload.get("roe"))
         # Simple valuation assessment
         valuation = "unknown"
         if pe_ttm is not None:

@@ -84,7 +84,31 @@ def _print_summary(query: str, nlu_result: dict, retrieval_result: dict, run_dir
         print("\n【分析信号】")
 
         ms = summary.get("market_signal")
-        if ms:
+        if isinstance(ms, list):
+            for idx, item in enumerate(ms, 1):
+                if not isinstance(item, dict):
+                    continue
+                print(f"  📈 市场信号[{idx}]:")
+                print(f"     symbol        : {item.get('symbol')} ({item.get('canonical_name')})")
+                print(f"     close         : {item.get('close')}")
+                print(f"     pct_change_1d : {item.get('pct_change_1d')}%")
+                print(f"     trend_signal  : {item.get('trend_signal')}")
+                print(f"     RSI_14        : {item.get('rsi_14')}")
+                print(f"     MA5 / MA20    : {item.get('ma5')} / {item.get('ma20')}")
+                macd = item.get("macd")
+                if macd:
+                    print(f"     MACD          : line={macd.get('macd_line')}, signal={macd.get('signal_line')}, hist={macd.get('histogram')}")
+                bb = item.get("bollinger")
+                if bb:
+                    print(f"     Bollinger     : upper={bb.get('upper')}, mid={bb.get('middle')}, lower={bb.get('lower')}, bw={bb.get('bandwidth')}%")
+                print(f"     volatility    : {item.get('volatility_20d')}%")
+                pct = item.get("pct_change_nd")
+                if pct:
+                    print(f"     多日涨跌幅    : 3d={pct.get('pct_3d')}%, 5d={pct.get('pct_5d')}%, 10d={pct.get('pct_10d')}%, 20d={pct.get('pct_20d')}%")
+                pvma = item.get("price_vs_ma")
+                if pvma:
+                    print(f"     price_vs_ma   : above_ma5={pvma.get('above_ma5')}, above_ma20={pvma.get('above_ma20')}")
+        elif isinstance(ms, dict) and ms:
             print(f"  📈 市场信号:")
             print(f"     symbol        : {ms.get('symbol')} ({ms.get('canonical_name')})")
             print(f"     close         : {ms.get('close')}")
@@ -107,7 +131,14 @@ def _print_summary(query: str, nlu_result: dict, retrieval_result: dict, run_dir
                 print(f"     price_vs_ma   : above_ma5={pvma.get('above_ma5')}, above_ma20={pvma.get('above_ma20')}")
 
         fs = summary.get("fundamental_signal")
-        if fs:
+        if isinstance(fs, list):
+            for idx, item in enumerate(fs, 1):
+                if not isinstance(item, dict):
+                    continue
+                print(f"  📊 基本面信号[{idx}]:")
+                print(f"     PE/PB/ROE     : {item.get('pe_ttm')} / {item.get('pb')} / {item.get('roe')}")
+                print(f"     估值评估      : {item.get('valuation_assessment')}")
+        elif isinstance(fs, dict) and fs:
             print(f"  📊 基本面信号:")
             print(f"     PE/PB/ROE     : {fs.get('pe_ttm')} / {fs.get('pb')} / {fs.get('roe')}")
             print(f"     估值评估      : {fs.get('valuation_assessment')}")

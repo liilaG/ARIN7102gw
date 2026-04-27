@@ -295,7 +295,7 @@ def main():
             validation["elapsed"] = round(elapsed, 1)
         except Exception as exc:
             rr = {}
-            validation = {"all_pass": False, "checks": {"exception": True}, "error": str(exc)[:200]}
+            validation = {"all_pass": False, "checks": {"exception": False}, "error": str(exc)[:200]}
             exception_count += 1
             elapsed = -1
 

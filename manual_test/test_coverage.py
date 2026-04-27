@@ -16,6 +16,7 @@ from pathlib import Path
 os.environ.setdefault("QI_USE_LIVE_MARKET", "1")
 os.environ.setdefault("QI_USE_LIVE_MACRO", "1")
 os.environ.setdefault("QI_USE_LIVE_NEWS", "1")
+os.environ.setdefault("QI_USE_LIVE_ANNOUNCEMENT", "0")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -154,10 +155,14 @@ def run_tests(cases: list[tuple], verbose: bool = False) -> list[dict]:
                 # Show detail for each signal
                 detail_parts = []
                 ms = summary.get("market_signal")
-                if ms:
+                if isinstance(ms, list):
+                    ms = ms[0] if ms and isinstance(ms[0], dict) else None
+                if isinstance(ms, dict):
                     detail_parts.append(f"trend={ms.get('trend_signal')} RSI={ms.get('rsi_14')}")
                 fs = summary.get("fundamental_signal")
-                if fs:
+                if isinstance(fs, list):
+                    fs = fs[0] if fs and isinstance(fs[0], dict) else None
+                if isinstance(fs, dict):
                     detail_parts.append(f"PE={fs.get('pe_ttm')} PB={fs.get('pb')} ROE={fs.get('roe')} val={fs.get('valuation_assessment')}")
                 mcs = summary.get("macro_signal")
                 if mcs:

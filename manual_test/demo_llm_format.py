@@ -27,8 +27,16 @@ def _load_retrieval_result(path: str) -> dict:
 
 def _latest_output_dir() -> Path | None:
     output_dir = Path(__file__).resolve().parent / "output"
-    dirs = sorted(output_dir.iterdir()) if output_dir.exists() else []
-    return dirs[-1] if dirs else None
+    if not output_dir.exists():
+        return None
+    candidates = [
+        path
+        for path in output_dir.iterdir()
+        if path.is_dir() and (path / "retrieval_result.json").exists()
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
 def _run_pipeline(query: str) -> dict:

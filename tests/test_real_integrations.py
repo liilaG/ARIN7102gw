@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import time
 from pathlib import Path
 
 from query_intelligence.bootstrap_public_data import PublicDataBootstrapper
@@ -52,6 +53,19 @@ class _FakeTushareClient:
                 "content": "消费板块短期回调，贵州茅台价格承压。",
                 "pub_time": "2026-04-22 10:00:00",
                 "src": src,
+            }
+        ]
+
+    def daily_basic(self, ts_code: str, trade_date: str, fields: str):  # noqa: ARG002
+        self.last_daily_basic_trade_date = trade_date
+        if trade_date != "20260422":
+            return []
+        return [
+            {
+                "ts_code": ts_code,
+                "trade_date": trade_date,
+                "pe_ttm": 22.8,
+                "pb": 7.4,
             }
         ]
 
@@ -340,6 +354,14 @@ class _FakeSession:
         )
 
 
+class _SlowAnnouncementProvider:
+    timeout = 1
+
+    def fetch_announcements(self, symbol: str, limit: int = 10):  # noqa: ARG002
+        time.sleep(8)
+        return []
+
+
 class _FakeMixedCninfoSession:
     def post(self, url: str, data: dict, headers: dict, timeout: int):  # noqa: ARG002
         return _FakeResponse(
@@ -393,7 +415,8 @@ class _FakeConnection:
 
 
 def test_tushare_market_provider_normalizes_market_and_fundamental_payloads() -> None:
-    provider = TushareMarketProvider(client=_FakeTushareClient())
+    client = _FakeTushareClient()
+    provider = TushareMarketProvider(client=client)
 
     result = provider.fetch_bundle("600519.SH", start_date="20260401", end_date="20260422")
 
@@ -405,7 +428,10 @@ def test_tushare_market_provider_normalizes_market_and_fundamental_payloads() ->
     assert result["payload"]["roe"] == 33.0
     assert result["fundamental_payload"]["source_name"] == "tushare"
     assert result["fundamental_payload"]["report_date"] == "2025-12-31"
+    assert result["fundamental_payload"]["pe_ttm"] == 22.8
+    assert result["fundamental_payload"]["pb"] == 7.4
     assert result["fundamental_payload"]["roe"] == 33.0
+    assert client.last_daily_basic_trade_date == "20260422"
 
 
 def test_tushare_market_provider_keeps_daily_payload_when_fundamental_permission_missing() -> None:
@@ -590,6 +616,27 @@ def test_retrieval_pipeline_output_exposes_live_urls_and_provider_payloads() -> 
     assert fundamental_item["provider_endpoint"] == "tushare.fina_indicator"
     assert fundamental_item["query_params"]["ts_code"] == "600519.SH"
     assert fundamental_item["source_reference"].startswith("api://tushare.fina_indicator?")
+
+
+def test_retrieval_pipeline_announcement_wait_uses_provider_timeout() -> None:
+    pipeline = RetrievalPipeline.build_demo()
+    pipeline.announcement_provider = _SlowAnnouncementProvider()
+
+    query_bundle = {
+        "normalized_query": "贵州茅台公告",
+        "symbols": ["600519.SH"],
+        "entity_names": ["贵州茅台"],
+        "keywords": [],
+        "source_plan": ["announcement"],
+        "product_type": "stock",
+    }
+
+    started = time.time()
+    docs = pipeline._fetch_live_docs(query_bundle, top_k=5)
+    elapsed = time.time() - started
+
+    assert docs == []
+    assert elapsed < 10
 
 
 def test_cninfo_provider_filters_announcements_to_requested_security_code() -> None:

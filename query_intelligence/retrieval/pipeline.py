@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import psycopg
+import time
 from datetime import date, timedelta
 from pathlib import Path
-from threading import Thread
+from threading import Lock, Thread
 from psycopg.rows import dict_row
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,11 @@ class RetrievalPipeline:
         self.macro_provider = None
         self.news_providers: list = []
         self.announcement_provider = None
+        self._announcement_retry_after_monotonic = 0.0
+        self._announcement_cooldown_seconds = 300.0
+        self._announcement_stuck_worker: Thread | None = None
+        self._announcement_fetch_inflight = False
+        self._announcement_breaker_lock = Lock()
         self.market_analyzer = MarketAnalyzer()
 
     @classmethod
@@ -394,34 +400,76 @@ class RetrievalPipeline:
                         )
                     except Exception:
                         logger.warning("News provider %s failed for %s", type(provider).__name__, symbol or canonical_name, exc_info=True)
-        if self.announcement_provider and "announcement" in query_bundle.get("source_plan", []):
-            for symbol, _ in entity_targets:
-                if not symbol:
-                    continue
-                ann_docs: list[dict] = []
-                worker_error: Exception | None = None
+        if (
+            self.announcement_provider
+            and "announcement" in query_bundle.get("source_plan", [])
+        ):
+            should_fetch_announcements = True
+            cooldown_elapsed = False
+            retry_after_seconds = 0.0
+            with self._announcement_breaker_lock:
+                now = time.monotonic()
+                if self._announcement_stuck_worker and not self._announcement_stuck_worker.is_alive():
+                    self._announcement_stuck_worker = None
+                if self._announcement_stuck_worker and self._announcement_stuck_worker.is_alive():
+                    should_fetch_announcements = False
+                    logger.warning("Announcement provider previous worker still running, skipping announcement fetch")
+                elif self._announcement_fetch_inflight:
+                    should_fetch_announcements = False
+                    logger.warning("Announcement provider fetch already in-flight, skipping announcement fetch")
+                elif self._announcement_retry_after_monotonic > now:
+                    should_fetch_announcements = False
+                    retry_after_seconds = round(self._announcement_retry_after_monotonic - now, 1)
+                    logger.warning("Announcement provider is in cooldown (retry in %ss), skipping announcement fetch", retry_after_seconds)
+                else:
+                    cooldown_elapsed = self._announcement_retry_after_monotonic > 0
+                    self._announcement_retry_after_monotonic = 0.0
+                    self._announcement_fetch_inflight = True
 
-                def _fetch() -> None:
-                    nonlocal ann_docs, worker_error
-                    try:
-                        ann_docs = self.announcement_provider.fetch_announcements(
-                            symbol,
-                            limit=min(top_k, 10),
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        worker_error = exc
+            if cooldown_elapsed:
+                logger.info("Announcement provider cooldown elapsed, retrying announcement fetch")
 
-                worker = Thread(target=_fetch, daemon=True)
-                worker.start()
-                worker.join(timeout=20)
+            if should_fetch_announcements:
+                try:
+                    for symbol, _ in entity_targets:
+                        if not symbol:
+                            continue
+                        ann_docs: list[dict] = []
+                        worker_error: Exception | None = None
+                        wait_timeout = getattr(self.announcement_provider, "timeout", 15) + 5
 
-                if worker.is_alive():
-                    logger.warning("Announcement provider timed out (20s) for %s, skipping", symbol)
-                    continue
-                if worker_error is not None:
-                    logger.warning("Announcement provider failed for %s: %s", symbol, worker_error)
-                    continue
-                docs.extend(ann_docs)
+                        def _fetch() -> None:
+                            nonlocal ann_docs, worker_error
+                            try:
+                                ann_docs = self.announcement_provider.fetch_announcements(
+                                    symbol,
+                                    limit=min(top_k, 10),
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                worker_error = exc
+
+                        worker = Thread(target=_fetch, daemon=True)
+                        worker.start()
+                        worker.join(timeout=wait_timeout)
+
+                        if worker.is_alive():
+                            with self._announcement_breaker_lock:
+                                self._announcement_stuck_worker = worker
+                                self._announcement_retry_after_monotonic = time.monotonic() + self._announcement_cooldown_seconds
+                            logger.warning(
+                                "Announcement provider timed out (%ss) for %s, entering cooldown for %ss",
+                                wait_timeout,
+                                symbol,
+                                self._announcement_cooldown_seconds,
+                            )
+                            break
+                        if worker_error is not None:
+                            logger.warning("Announcement provider failed for %s: %s", symbol, worker_error)
+                            continue
+                        docs.extend(ann_docs)
+                finally:
+                    with self._announcement_breaker_lock:
+                        self._announcement_fetch_inflight = False
         for doc in docs:
             doc.setdefault("retrieval_score", 0.5)
         return docs

@@ -103,6 +103,8 @@ class AKShareMarketProvider:
         query_params: dict[str, str] = {"symbol": symbol}
         if endpoint in {"akshare.stock_zh_a_hist", "akshare.fund_etf_hist_em", "akshare.stock_zh_a_daily"}:
             query_params.update({"period": "daily", "start_date": start_date, "end_date": end_date, "adjust": ""})
+        elif endpoint == "akshare.stock_zh_index_daily":
+            query_params = {"symbol": self._prefixed_index_symbol(symbol)}
         elif endpoint == "akshare.fund_open_fund_info_em":
             query_params["indicator"] = "单位净值走势"
         elif endpoint == "sina.hq_sinajs_cn":
@@ -425,7 +427,7 @@ class AKShareMarketProvider:
 
     def _build_index_daily_payload(self, symbol: str, market_rows: list[dict]) -> dict:
         latest = market_rows[0] if market_rows else {}
-        trace = self._api_trace("akshare.stock_zh_index_daily", {"symbol": symbol})
+        trace = self._api_trace("akshare.stock_zh_index_daily", {"symbol": self._prefixed_index_symbol(symbol)})
         return {
             "source_name": "akshare",
             "provider": "akshare",
