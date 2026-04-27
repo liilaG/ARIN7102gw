@@ -589,7 +589,13 @@ def _next_questions_for_style(style: str, payload: dict[str, Any], *, zh: bool) 
     if isinstance(entities, list) and entities:
         first = entities[0]
         if isinstance(first, dict):
-            target = first.get("canonical_name") or first.get("entity") or first.get("symbol")
+            target = (
+                first.get("canonical_name")
+                or first.get("entity")
+                or first.get("symbol")
+                or first.get("mention")
+                or ("这个标的" if zh else "this asset")
+            )
         else:
             target = first
     else:
