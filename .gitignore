@@ -46,6 +46,11 @@ PPT_Overleaf/archive/
 PPT_Overleaf/*.png
 PPT_Overleaf/*.jpg
 PPT_Overleaf/*.jpeg
+PPT_Overleaf/*.aux
+PPT_Overleaf/*.nav
+PPT_Overleaf/*.out
+PPT_Overleaf/*.snm
+PPT_Overleaf/*.toc
 
 # Local training/evaluation scratch files
 *.log

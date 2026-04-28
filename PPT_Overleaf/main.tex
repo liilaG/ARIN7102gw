@@ -47,16 +47,7 @@
 \institute[HKU]{The University of Hong Kong}
 \date[ARIN7012 Presentation]{ARIN7012 Project Presentation}
 
-\AtBeginSection[]{
-  \begin{frame}
-  \vfill
-  \centering
-  \begin{beamercolorbox}[sep=8pt,center,shadow=true,rounded=true]{title}
-    \usebeamerfont{title}\insertsectionhead\par%
-  \end{beamercolorbox}
-  \vfill
-  \end{frame}
-}
+\AtBeginSection[]{}
 
 \tikzset{
   box/.style={draw=softLine, rounded corners=2pt, fill=softPanel, align=center, minimum height=0.72cm, text width=2.35cm, font=\scriptsize},
@@ -82,11 +73,6 @@
 \begin{document}
 
 \frame{\titlepage}
-
-\begin{frame}
-\frametitle{Contents}
-\tableofcontents
-\end{frame}
 
 \section{Background and Goal}
 
@@ -162,32 +148,6 @@
   \vspace{0.4em}
 
   \slidenote{The frontend is the user-facing shell. This deck focuses on the backend intelligence and evidence contract.}
-\end{frame}
-
-\begin{frame}{Data flows from public sources to runtime evidence}
-  \begin{columns}[T,onlytextwidth]
-    \column{0.48\textwidth}
-      \begin{itemize}
-        \item Public datasets support training and evaluation.
-        \item Runtime entities, aliases, and documents support clone usage.
-        \item Live providers add fresh market, news, announcement, and macro data.
-        \item Cleaning maps raw data into task assets and searchable evidence.
-      \end{itemize}
-    \column{0.48\textwidth}
-      \begin{tikzpicture}[node distance=0.28cm, scale=0.68, transform shape]
-        \node[mainbox, text width=2.35cm] (s1) {GitHub /\\HuggingFace};
-        \node[mainbox, below=0.18cm of s1, text width=2.35cm] (s2) {Kaggle-style\\finance data};
-        \node[mainbox, below=0.18cm of s2, text width=2.35cm] (s3) {Live APIs};
-        \node[greenbox, right=0.55cm of s2, text width=2.1cm] (clean) {sync\\clean\\map};
-        \node[tealbox, right=0.55cm of clean, yshift=0.42cm, text width=2.1cm] (train) {training\\manifest};
-        \node[tealbox, right=0.55cm of clean, yshift=-0.42cm, text width=2.1cm] (run) {runtime\\assets};
-        \draw[flow] (s1) -- (clean);
-        \draw[flow] (s2) -- (clean);
-        \draw[flow] (s3) -- (clean);
-        \draw[flow] (clean) -- (train);
-        \draw[flow] (clean) -- (run);
-      \end{tikzpicture}
-  \end{columns}
 \end{frame}
 
 \section{Implementation and Performance}
@@ -324,31 +284,6 @@
   \end{columns}
 \end{frame}
 
-\begin{frame}{Training and evaluation keep the backend measurable}
-  \begin{columns}[T,onlytextwidth]
-    \column{0.46\textwidth}
-      \begin{itemize}
-        \item Core NLU and retrieval use classical, explainable ML.
-        \item Dataset sync builds manifest-based task assets.
-        \item Runtime assets are separated from training caches.
-        \item Tests cover JSON schemas, boundaries, fuzz cases, and integrations.
-      \end{itemize}
-    \column{0.50\textwidth}
-      \begin{tikzpicture}[node distance=0.2cm]
-        \node[mainbox, text width=2.35cm] (reg) {dataset registry};
-        \node[greenbox, below=0.15cm of reg, text width=2.35cm] (assets) {task assets};
-        \node[greenbox, below=0.15cm of assets, text width=2.35cm] (models) {classical models};
-        \node[tealbox, right=0.7cm of assets, text width=2.35cm] (runtime) {runtime assets};
-        \node[redbox, below=0.52cm of runtime, text width=2.35cm] (eval) {tests + evaluation};
-        \draw[flow] (reg) -- (assets);
-        \draw[flow] (assets) -- (models);
-        \draw[flow] (assets) -- (runtime);
-        \draw[flow] (models) -- (eval);
-        \draw[flow] (runtime) -- (eval);
-      \end{tikzpicture}
-  \end{columns}
-\end{frame}
-
 \begin{frame}{Current results support the demo story}
   \centering
   \metric{0.9881}{Finance recall}{10k eval}
@@ -371,41 +306,25 @@
 
 \section{Demo and Conclusion}
 
-\begin{frame}{Demo: one query becomes four evidence layers}
-  \begin{columns}[T,onlytextwidth]
-    \column{0.43\textwidth}
-      \begin{itemize}
-        \item Example: ``What do you think about Ping An Insurance?''
-        \item The chatbot sends raw text and optional user profile.
-        \item FinSight returns structured artifacts for response generation.
-      \end{itemize}
-    \column{0.53\textwidth}
-      \begin{tikzpicture}[node distance=0.17cm]
-        \node[mainbox, text width=2.95cm] (q) {user query};
-        \node[greenbox, below=0.13cm of q, text width=2.95cm] (nlu) {intent + entity + source plan};
-        \node[greenbox, below=0.13cm of nlu, text width=2.95cm] (ret) {documents + structured evidence};
-        \node[tealbox, below=0.13cm of ret, text width=2.95cm] (ana) {market / fundamental signals};
-        \node[redbox, below=0.13cm of ana, text width=2.95cm] (ans) {guarded answer JSON};
-        \draw[flow] (q) -- (nlu);
-        \draw[flow] (nlu) -- (ret);
-        \draw[flow] (ret) -- (ana);
-        \draw[flow] (ana) -- (ans);
-      \end{tikzpicture}
-  \end{columns}
+\begin{frame}{Demo: an English finance query returns grounded evidence}
+  \centering
+  \includegraphics[width=\textwidth,height=0.76\textheight,keepaspectratio]{figures/demo_ping_an.png}
+
+  \slidenote{The answer cites market price, fundamentals, industry valuation, and evidence sources instead of free-form guessing.}
 \end{frame}
 
-\begin{frame}{Demo artifacts make the chatbot output traceable}
-  \begin{tabularx}{\textwidth}{lX}
-    \toprule
-    Artifact & Demo highlight \\
-    \midrule
-    \texttt{nlu\_result} & product type, question style, entity, risk flags, source plan. \\
-    \texttt{retrieval\_result} & executed sources, ranked documents, structured rows, coverage, warnings. \\
-    \texttt{analysis\_summary} & trend, RSI, valuation, macro direction, and data readiness. \\
-    \texttt{answer\_generation} & evidence IDs, key points, limitations, disclaimer, model name. \\
-    \texttt{next\_question\_prediction} & three follow-up questions with scores and reasons. \\
-    \bottomrule
-  \end{tabularx}
+\begin{frame}{Demo: a Chinese market query uses live price evidence}
+  \centering
+  \includegraphics[width=\textwidth,height=0.76\textheight,keepaspectratio]{figures/demo_maotai.png}
+
+  \slidenote{The same pipeline supports Chinese input and returns price movement, intraday range, technical signal, evidence source, and risk disclaimer.}
+\end{frame}
+
+\begin{frame}{Demo: an out-of-scope query is rejected safely}
+  \centering
+  \includegraphics[width=\textwidth,height=0.76\textheight,keepaspectratio]{figures/demo_out_of_scope.png}
+
+  \slidenote{The system detects that the request is not financial and avoids inventing unsupported evidence.}
 \end{frame}
 
 \begin{frame}{Future work focuses on integration and robustness}
