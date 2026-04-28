@@ -22,6 +22,7 @@ env/
 .DS_Store
 .idea/
 .vscode/
+AGENTS.md
 
 # Large public datasets and generated training assets
 data/external/
@@ -48,4 +49,3 @@ temp/
 # Keep trained model artifacts for public release.
 !models/*.joblib
 !models/*.json
-
