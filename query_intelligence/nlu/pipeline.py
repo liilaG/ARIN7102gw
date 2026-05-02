@@ -629,10 +629,6 @@ class NLUPipeline:
             "bond fund",
             "net profit",
             "ping an",
-            "nasdaq 100",
-            "s&p 500",
-            "s&p500",
-            "dow jones",
         ]
         english_tokens = [
             "etf",
@@ -660,8 +656,6 @@ class NLUPipeline:
             "pingan",
             "fundamental",
             "fundamentals",
-            "nasdaq",
-            "sp500",
             "invest",
             "investment",
             "investing",
@@ -1406,7 +1400,7 @@ class NLUPipeline:
         forecast_terms = ["未来", "接下来", "后市", "会怎么走", "后面会怎么走", "怎么看后市"]
         lowered = query.lower()
         english_advice_terms = ["should i", "worth", "suitable", "good to buy", "hold it", "cut the loss"]
-        english_compare_terms = ["compare", "difference", "better", "riskier"]
+        english_compare_terms = ["compare", "difference", "better"]
         open_evaluation_terms = ["你觉得", "怎么看", "如何看", "评价一下", "分析一下", "从投资角度", "后面怎么看", "后续怎么看"]
         has_advice_marker = any(term in query for term in advice_terms) or any(term in lowered for term in english_advice_terms)
         has_why_marker = any(term in query for term in ["为什么", "为啥"]) or "why" in lowered

@@ -200,6 +200,7 @@ class RetrievalPipeline:
         live_index_items: list[dict] = []
         live_provider_warning_items: list[dict] = []
         live_symbols: set[str] = set()
+        failed_live_market_symbols: set[str] = set()
         live_fundamental_symbols: set[str] = set()
         live_industry_names: set[str] = set()
 
@@ -219,6 +220,7 @@ class RetrievalPipeline:
                     )
             except Exception as exc:
                 logger.warning("Market provider fetch failed for %s: %s", symbol, exc)
+                failed_live_market_symbols.add(symbol)
                 live_provider_warning_items.append(self._build_live_provider_warning_item(symbol, exc))
                 continue
 
@@ -272,6 +274,8 @@ class RetrievalPipeline:
         for item in structured_items:
             payload = item.get("payload", {})
             if item["source_type"] == "market_api" and payload.get("symbol") in live_symbols:
+                continue
+            if item["source_type"] == "market_api" and payload.get("symbol") in failed_live_market_symbols:
                 continue
             if item["source_type"] == "fundamental_sql" and payload.get("symbol") in live_fundamental_symbols:
                 continue

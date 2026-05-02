@@ -480,16 +480,6 @@ def test_english_macro_query_plans_macro_and_industry_sources() -> None:
     assert {"macro_sql", "news"} <= set(retrieval_result["executed_sources"])
 
 
-def test_english_index_comparison_is_not_out_of_scope() -> None:
-    service = build_demo_service()
-
-    result = service.analyze_query("Which looks riskier right now, Nasdaq 100 or S&P 500?", debug=True)
-
-    assert result["product_type"]["label"] != "out_of_scope"
-    assert "out_of_scope_query" not in result["risk_flags"]
-    assert result["question_style"] == "compare"
-
-
 @pytest.mark.parametrize(
     "query",
     [
@@ -789,6 +779,10 @@ def test_live_market_provider_failure_is_returned_as_structured_warning() -> Non
     assert warning_item["payload"]["provider_warnings"] == [
         "market_provider_fetch_failed:600519.SH:ConnectionError:Remote end closed connection without response"
     ]
+    assert not any(
+        item["source_type"] == "market_api" and item.get("payload", {}).get("symbol") == "600519.SH"
+        for item in structured_items
+    )
 
 
 def test_announcement_timeout_does_not_permanently_disable_future_fetches() -> None:

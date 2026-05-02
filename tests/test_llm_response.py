@@ -9,31 +9,20 @@ from pathlib import Path
 import pytest
 
 from scripts.llm_response import (
-    AnthropicChatModel,
     ChatModel,
-    DEFAULT_ANSWER_MAX_NEW_TOKENS,
     DEFAULT_FEW_SHOT_SOURCE,
-    DEFAULT_NEXT_MAX_NEW_TOKENS,
-    OpenAICompatibleChatModel,
     _question_style_from_payload,
     build_record_from_query,
     build_frontend_response,
     compact_payload,
     coerce_query,
     coerce_top_k,
-    default_api_base_url,
-    default_api_extra_body,
-    default_api_key,
     extract_json_object,
     hf_token,
     load_few_shot_bank,
     ANSWER_FEW_SHOTS,
-    LLMResponseRuntime,
-    answer_matches_language,
     make_next_question_language_repair_messages,
-    make_answer_language_repair_messages,
     next_questions_match_language,
-    normalize_llm_backend,
     normalize_next_questions,
     resolve_model_path,
     select_few_shots,
@@ -232,219 +221,6 @@ def test_hf_token_reads_standard_environment_variables(monkeypatch) -> None:
     assert hf_token() == "primary-token"
 
 
-def test_default_openai_compatible_api_config_accepts_gemini_env(monkeypatch) -> None:
-    monkeypatch.delenv("QI_LLM_API_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("QI_LLM_API_KEY", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("GEMINI_API_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai")
-    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
-
-    assert default_api_base_url("openai-compatible") == "https://generativelanguage.googleapis.com/v1beta/openai"
-    assert default_api_key("openai-compatible") == "gemini-key"
-
-
-def test_default_openai_compatible_api_config_prefers_deepseek_flash_defaults(monkeypatch) -> None:
-    for env_name in (
-        "QI_LLM_API_BASE_URL",
-        "QI_LLM_API_EXTRA_BODY_JSON",
-        "DEEPSEEK_API_BASE_URL",
-        "DEEPSEEK_BASE_URL",
-        "GEMINI_API_BASE_URL",
-        "OPENAI_BASE_URL",
-        "QI_LLM_API_KEY",
-        "OPENROUTER_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "OPENAI_API_KEY",
-        "GEMINI_API_KEY",
-    ):
-        monkeypatch.delenv(env_name, raising=False)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
-
-    assert default_api_base_url("openai-compatible") == "https://api.deepseek.com"
-    assert default_api_key("openai-compatible") == "deepseek-key"
-    assert default_api_extra_body() == {"reasoning_effort": "max"}
-
-
-def test_default_api_extra_body_can_be_cleared_for_other_providers(monkeypatch) -> None:
-    monkeypatch.setenv("QI_LLM_API_EXTRA_BODY_JSON", "{}")
-
-    assert default_api_extra_body() == {}
-
-
-def test_default_generation_token_limits_are_large_enough_for_json_output() -> None:
-    assert DEFAULT_ANSWER_MAX_NEW_TOKENS == 8192
-    assert DEFAULT_NEXT_MAX_NEW_TOKENS == 8192
-
-
-def test_normalize_llm_backend_accepts_provider_aliases() -> None:
-    assert normalize_llm_backend("deepseek") == "openai-compatible"
-    assert normalize_llm_backend("local") == "openai-compatible"
-    assert normalize_llm_backend("claude") == "anthropic"
-    assert normalize_llm_backend("transformers") == "local-transformers"
-
-
-def test_openai_compatible_chat_model_calls_chat_completions(monkeypatch) -> None:
-    calls: dict[str, object] = {}
-
-    class FakeResponse:
-        status_code = 200
-        text = "{}"
-        reason = "OK"
-
-        def json(self):
-            return {"choices": [{"message": {"content": "{\"answer\":\"ok\"}"}}]}
-
-    def fake_post(url, *, headers, json, timeout):
-        calls["url"] = url
-        calls["headers"] = headers
-        calls["json"] = json
-        calls["timeout"] = timeout
-        return FakeResponse()
-
-    monkeypatch.setattr("scripts.llm_response.requests.post", fake_post)
-
-    model = OpenAICompatibleChatModel(
-        "deepseek-chat",
-        base_url="https://api.deepseek.com/v1/",
-        api_key="test-key",
-        timeout=3.0,
-    )
-    text = model.generate_text([{"role": "user", "content": "hello"}], max_new_tokens=12, temperature=0.1)
-
-    assert text == "{\"answer\":\"ok\"}"
-    assert calls["url"] == "https://api.deepseek.com/v1/chat/completions"
-    assert calls["headers"]["Authorization"] == "Bearer test-key"
-    assert calls["json"]["model"] == "deepseek-chat"
-    assert calls["json"]["max_tokens"] == 12
-    assert calls["json"]["response_format"] == {"type": "json_object"}
-    assert calls["json"]["messages"] == [{"role": "user", "content": "hello"}]
-    assert calls["timeout"] == 3.0
-
-
-def test_openai_compatible_chat_model_allows_localhost_without_api_key(monkeypatch) -> None:
-    class FakeResponse:
-        status_code = 200
-        text = "{}"
-        reason = "OK"
-
-        def json(self):
-            return {"choices": [{"message": {"content": "{}"}}]}
-
-    def fake_post(url, *, headers, json, timeout):
-        assert url == "http://127.0.0.1:8000/v1/chat/completions"
-        assert "Authorization" not in headers
-        return FakeResponse()
-
-    monkeypatch.setattr("scripts.llm_response.requests.post", fake_post)
-
-    model = OpenAICompatibleChatModel(
-        "local-model",
-        base_url="http://127.0.0.1:8000/v1",
-        api_key=None,
-        timeout=3.0,
-    )
-
-    assert model.generate_text([{"role": "user", "content": "hello"}], max_new_tokens=4, temperature=0) == "{}"
-
-
-def test_openai_compatible_chat_model_supports_full_chat_url_and_custom_key_header(monkeypatch) -> None:
-    calls: dict[str, object] = {}
-
-    class FakeResponse:
-        status_code = 200
-        text = "{}"
-        reason = "OK"
-
-        def json(self):
-            return {"choices": [{"message": {"content": "{}"}}]}
-
-    def fake_post(url, *, headers, json, timeout):
-        calls["url"] = url
-        calls["headers"] = headers
-        calls["json"] = json
-        return FakeResponse()
-
-    monkeypatch.setattr("scripts.llm_response.requests.post", fake_post)
-
-    model = OpenAICompatibleChatModel(
-        "deployment-name",
-        base_url="https://unused.example/v1",
-        chat_url="https://resource.openai.azure.com/openai/deployments/deployment-name/chat/completions?api-version=2024-10-21",
-        api_key="azure-key",
-        api_key_header="api-key",
-        api_key_prefix="",
-        extra_headers={"X-Test": "yes"},
-        extra_body={"reasoning_effort": "max"},
-        response_format_json=True,
-        timeout=3.0,
-    )
-    model.generate_text([{"role": "user", "content": "hello"}], max_new_tokens=4, temperature=0)
-
-    assert calls["url"] == (
-        "https://resource.openai.azure.com/openai/deployments/deployment-name/chat/completions?api-version=2024-10-21"
-    )
-    assert calls["headers"]["api-key"] == "azure-key"
-    assert "Authorization" not in calls["headers"]
-    assert calls["headers"]["X-Test"] == "yes"
-    assert calls["json"]["reasoning_effort"] == "max"
-    assert calls["json"]["response_format"] == {"type": "json_object"}
-
-
-def test_openai_compatible_chat_model_requires_key_for_remote_url() -> None:
-    with pytest.raises(SystemExit, match="Missing LLM API key"):
-        OpenAICompatibleChatModel(
-            "deepseek-chat",
-            base_url="https://api.deepseek.com/v1",
-            api_key=None,
-            timeout=3.0,
-        )
-
-
-def test_anthropic_chat_model_uses_messages_api(monkeypatch) -> None:
-    calls: dict[str, object] = {}
-
-    class FakeResponse:
-        status_code = 200
-        text = "{}"
-        reason = "OK"
-
-        def json(self):
-            return {"content": [{"type": "text", "text": "{\"answer\":\"ok\"}"}]}
-
-    def fake_post(url, *, headers, json, timeout):
-        calls["url"] = url
-        calls["headers"] = headers
-        calls["json"] = json
-        calls["timeout"] = timeout
-        return FakeResponse()
-
-    monkeypatch.setattr("scripts.llm_response.requests.post", fake_post)
-
-    model = AnthropicChatModel(
-        "claude-test",
-        base_url="https://api.anthropic.com/v1",
-        api_key="anthropic-key",
-        timeout=5.0,
-        anthropic_version="2023-06-01",
-    )
-    text = model.generate_text(
-        [{"role": "system", "content": "rules"}, {"role": "user", "content": "hello"}],
-        max_new_tokens=16,
-        temperature=0.2,
-    )
-
-    assert text == "{\"answer\":\"ok\"}"
-    assert calls["url"] == "https://api.anthropic.com/v1/messages"
-    assert calls["headers"]["x-api-key"] == "anthropic-key"
-    assert calls["headers"]["anthropic-version"] == "2023-06-01"
-    assert calls["json"]["system"] == "rules"
-    assert calls["json"]["messages"] == [{"role": "user", "content": "hello"}]
-    assert calls["json"]["max_tokens"] == 16
-
-
 def test_chat_model_disables_remote_code_by_default(monkeypatch, tmp_path: Path) -> None:
     calls: list[tuple[str, bool]] = []
 
@@ -579,24 +355,6 @@ def test_next_questions_language_mismatch_can_be_repaired_by_model_instruction()
     assert "current_output" in messages[1]["content"]
 
 
-def test_answer_language_mismatch_can_be_repaired_by_model_instruction() -> None:
-    output = {
-        "answer": "主要受政策预期支持。",
-        "key_points": ["政策支持"],
-        "evidence_used": ["D1"],
-        "limitations": ["数据覆盖不完整"],
-        "risk_disclaimer": "不构成投资建议。",
-    }
-
-    assert answer_matches_language(output, "Why has Ping An been rising recently?") is False
-
-    messages = make_answer_language_repair_messages("Why has Ping An been rising recently?", output)
-
-    assert "English" in messages[0]["content"]
-    assert "evidence_used" in messages[0]["content"]
-    assert "current_output" in messages[1]["content"]
-
-
 def test_normalize_next_questions_keeps_model_predictions_without_hardcoded_translation() -> None:
     result = normalize_next_questions(
         {
@@ -611,68 +369,6 @@ def test_normalize_next_questions_keeps_model_predictions_without_hardcoded_tran
 
     assert result["predictions"][0]["question"] == "What drove the price move?"
     assert result["predictions"][0]["reason"] == "why_followup"
-
-
-def test_runtime_repairs_answer_language_for_english_query() -> None:
-    record = _sample_record()
-    record["query"] = "What do you think about Ping An Insurance (601318.SH)?"
-    record["nlu_result"]["raw_query"] = record["query"]
-    record["nlu_result"]["entities"] = [{"canonical_name": "Ping An Insurance", "symbol": "601318.SH"}]
-
-    class FakeAnswerModel:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def generate_json(self, messages, *, max_new_tokens, temperature, json_retries):  # noqa: ANN001, ARG002
-            self.calls += 1
-            if self.calls == 1:
-                return {
-                    "answer": "主要受政策预期支持。",
-                    "key_points": ["政策支持"],
-                    "evidence_used": ["D1"],
-                    "limitations": ["数据覆盖不完整"],
-                    "risk_disclaimer": "不构成投资建议。",
-                }
-            assert "English" in messages[0]["content"]
-            return {
-                "answer": "The available evidence points to policy expectations as a possible driver.",
-                "key_points": ["Policy expectations are a possible support factor."],
-                "evidence_used": ["D1"],
-                "limitations": ["Data coverage is incomplete."],
-                "risk_disclaimer": "This answer is based only on the provided evidence and is not investment advice.",
-            }
-
-    class FakeNextQuestionModel:
-        def generate_json(self, messages, *, max_new_tokens, temperature, json_retries):  # noqa: ANN001, ARG002
-            return {
-                "predictions": [
-                    {"question": "What risks should I watch next?", "score": 0.9, "reason": "risk_followup"},
-                    {"question": "How do its fundamentals compare with peers?", "score": 0.8, "reason": "peer_followup"},
-                    {"question": "Which evidence source is most important?", "score": 0.7, "reason": "evidence_followup"},
-                ]
-            }
-
-    runtime = object.__new__(LLMResponseRuntime)
-    runtime.llm_backend = "openai-compatible"
-    runtime.answer_model_name = "answer-model"
-    runtime.next_question_model_name = "next-model"
-    runtime.temperature = 0.2
-    runtime.answer_max_new_tokens = 8192
-    runtime.next_max_new_tokens = 8192
-    runtime.json_retries = 1
-    runtime.answer_few_shot_bank = {}
-    runtime.next_question_few_shot_bank = {}
-    runtime.answer_model = FakeAnswerModel()
-    runtime.next_question_model = FakeNextQuestionModel()
-
-    response = runtime.generate(record)
-
-    assert runtime.answer_model.calls == 2
-    assert response["request"]["language"] == "en"
-    assert response["answer_generation"]["answer"].startswith("The available evidence")
-    assert response["answer_generation"]["risk_disclaimer"] == (
-        "This answer is based only on the provided evidence and is not investment advice."
-    )
 
 
 def test_extract_json_object_repairs_common_malformed_json() -> None:
@@ -837,15 +533,8 @@ def test_build_frontend_response_trims_overlong_answer_text() -> None:
 
 
 def test_build_frontend_response_caps_evidence_used() -> None:
-    record = _sample_record()
-    record["retrieval_result"]["documents"] = [
-        {"evidence_id": f"E{index}", "source_type": "news", "summary": f"fact {index}"}
-        for index in range(1, 9)
-    ]
-    record["retrieval_result"]["structured_data"] = []
-
     response = build_frontend_response(
-        record,
+        _sample_record(),
         {
             "answer": "主要受估值修复和行业情绪改善影响。",
             "key_points": [],
@@ -858,23 +547,6 @@ def test_build_frontend_response_caps_evidence_used() -> None:
     )
 
     assert response["answer_generation"]["evidence_used"] == ["E1", "E2", "E3", "E4", "E5", "E6"]
-
-
-def test_build_frontend_response_filters_model_invented_evidence_ids() -> None:
-    response = build_frontend_response(
-        _sample_record(),
-        {
-            "answer": "主要受估值修复和行业情绪改善影响。",
-            "key_points": [],
-            "evidence_used": ["D1", "statistical_result.macro_signal", "S1", "not-an-evidence-id"],
-            "limitations": [],
-        },
-        {"predictions": []},
-        answer_model="answer-model",
-        next_question_model="next-model",
-    )
-
-    assert response["answer_generation"]["evidence_used"] == ["D1", "S1"]
 
 
 def test_build_frontend_response_overrides_out_of_scope_next_questions() -> None:

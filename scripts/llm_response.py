@@ -11,9 +11,6 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
-
-import requests
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,311 +20,18 @@ if str(ROOT) not in sys.path:
 from query_intelligence.contracts import MAX_QUERY_LENGTH
 
 
-DEFAULT_LLM_BACKEND = "openai-compatible"
-DEFAULT_API_BASE_URL = "https://api.deepseek.com"
-DEFAULT_ANSWER_MODEL = "deepseek-v4-flash"
-DEFAULT_NEXT_QUESTION_MODEL = "deepseek-v4-flash"
-DEFAULT_LOCAL_ANSWER_MODEL = "instruction-pretrain/finance-Llama3-8B"
-DEFAULT_LOCAL_NEXT_QUESTION_MODEL = "Qwen/Qwen2.5-3B-Instruct"
-DEFAULT_ANTHROPIC_API_BASE_URL = "https://api.anthropic.com/v1"
-DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
-DEFAULT_API_RESPONSE_FORMAT_JSON = True
-DEFAULT_API_EXTRA_BODY = {"reasoning_effort": "max"}
-DEFAULT_ANSWER_MAX_NEW_TOKENS = 8192
-DEFAULT_NEXT_MAX_NEW_TOKENS = 8192
+DEFAULT_ANSWER_MODEL = "instruction-pretrain/finance-Llama3-8B"
+DEFAULT_NEXT_QUESTION_MODEL = "Qwen/Qwen2.5-3B-Instruct"
 DEFAULT_FEW_SHOT_SOURCE = ROOT / "data" / "answer_generation_sft" / "synthetic_source_500.jsonl"
 DEFAULT_LLM_MODELS_DIR = ROOT / "models" / "llm"
 _MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024
 _REQUEST_READ_TIMEOUT_SECONDS = 30.0
-_DEFAULT_API_TIMEOUT_SECONDS = 120.0
-
-# LLM API quick-switch templates, verified against official docs on 2026-04-28.
-# Uncomment one provider block below only if you want hard-coded defaults in this file.
-# Environment variables or CLI args still override these constants at runtime.
-#
-# Default choice: DeepSeek V4 Flash with max reasoning effort.
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://api.deepseek.com"
-# DEFAULT_ANSWER_MODEL = "deepseek-v4-flash"
-# DEFAULT_NEXT_QUESTION_MODEL = "deepseek-v4-flash"
-# DEFAULT_API_EXTRA_BODY = {"reasoning_effort": "max"}
-# env key: QI_LLM_API_KEY or DEEPSEEK_API_KEY
-# DeepSeek JSON Output is enabled by default through response_format={"type":"json_object"}.
-#
-# OpenRouter free model examples:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://openrouter.ai/api/v1"
-# DEFAULT_ANSWER_MODEL = "qwen/qwen3-next-80b-a3b-instruct:free"
-# DEFAULT_NEXT_QUESTION_MODEL = "qwen/qwen3-next-80b-a3b-instruct:free"
-# DEFAULT_ANSWER_MODEL = "openrouter/free"
-# DEFAULT_NEXT_QUESTION_MODEL = "openrouter/free"
-# env key: QI_LLM_API_KEY or OPENROUTER_API_KEY
-# optional env: QI_LLM_API_EXTRA_HEADERS_JSON='{"HTTP-Referer":"https://your.site","X-OpenRouter-Title":"ARIN"}'
-# set env QI_LLM_API_EXTRA_BODY_JSON='{}' when switching away from DeepSeek.
-#
-# Google Gemini Free tier, OpenAI-compatible:
-# Gemini Free tier is available in eligible countries. Official published free-tier
-# limits include Gemini 2.5 Flash and Gemini 2.5 Flash-Lite; actual quota can vary.
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
-# DEFAULT_ANSWER_MODEL = "gemini-2.5-flash"
-# DEFAULT_NEXT_QUESTION_MODEL = "gemini-2.5-flash-lite"
-# env key: QI_LLM_API_KEY or GEMINI_API_KEY
-#
-# DeepSeek V4, OpenAI-compatible:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://api.deepseek.com"
-# DEFAULT_ANSWER_MODEL = "deepseek-v4-flash"
-# DEFAULT_NEXT_QUESTION_MODEL = "deepseek-v4-flash"
-# env key: QI_LLM_API_KEY or DEEPSEEK_API_KEY
-# default extra body: {"reasoning_effort":"max"}
-# DeepSeek JSON Output is enabled by default through response_format={"type":"json_object"}.
-# If you need the higher quality tier, switch DEFAULT_ANSWER_MODEL to "deepseek-v4-pro".
-#
-# OpenAI GPT:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://api.openai.com/v1"
-# DEFAULT_ANSWER_MODEL = "gpt-5.5"
-# DEFAULT_NEXT_QUESTION_MODEL = "gpt-5.4-mini"
-# env key: QI_LLM_API_KEY or OPENAI_API_KEY
-#
-# Claude native Messages API:
-# DEFAULT_LLM_BACKEND = "anthropic"
-# DEFAULT_ANTHROPIC_API_BASE_URL = "https://api.anthropic.com/v1"
-# DEFAULT_ANSWER_MODEL = "claude-opus-4-6"
-# DEFAULT_NEXT_QUESTION_MODEL = "claude-sonnet-4-6"
-# env key: QI_LLM_API_KEY or ANTHROPIC_API_KEY
-#
-# Google Gemini OpenAI-compatible:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
-# DEFAULT_ANSWER_MODEL = "gemini-3-pro-preview"
-# DEFAULT_NEXT_QUESTION_MODEL = "gemini-3-flash-preview"
-# env key: QI_LLM_API_KEY or GEMINI_API_KEY
-#
-# xAI Grok, OpenAI-compatible:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://api.x.ai/v1"
-# DEFAULT_ANSWER_MODEL = "grok-4.20-reasoning"
-# DEFAULT_NEXT_QUESTION_MODEL = "grok-4-fast-non-reasoning"
-# env key: QI_LLM_API_KEY or XAI_API_KEY
-#
-# Mistral, OpenAI-compatible:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://api.mistral.ai/v1"
-# DEFAULT_ANSWER_MODEL = "mistral-large-latest"
-# DEFAULT_NEXT_QUESTION_MODEL = "mistral-small-latest"
-# env key: QI_LLM_API_KEY or MISTRAL_API_KEY
-#
-# Kimi / Moonshot, OpenAI-compatible:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://api.moonshot.cn/v1"
-# DEFAULT_ANSWER_MODEL = "kimi-k2.5"
-# DEFAULT_NEXT_QUESTION_MODEL = "kimi-k2.5"
-# env key: QI_LLM_API_KEY or MOONSHOT_API_KEY
-#
-# Qwen / Alibaba Cloud Model Studio DashScope, OpenAI-compatible:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"  # Singapore
-# DEFAULT_API_BASE_URL = "https://dashscope-us.aliyuncs.com/compatible-mode/v1"    # US Virginia
-# DEFAULT_API_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"       # China Beijing
-# DEFAULT_API_BASE_URL = "https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1"
-# DEFAULT_ANSWER_MODEL = "qwen-plus"
-# DEFAULT_NEXT_QUESTION_MODEL = "qwen-turbo"
-# env key: QI_LLM_API_KEY or DASHSCOPE_API_KEY
-#
-# OpenRouter, OpenAI-compatible aggregator:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://openrouter.ai/api/v1"
-# DEFAULT_ANSWER_MODEL = "openai/gpt-5.2"
-# DEFAULT_NEXT_QUESTION_MODEL = "anthropic/claude-sonnet-4.6"
-# env key: QI_LLM_API_KEY or OPENROUTER_API_KEY
-# optional env: QI_LLM_API_EXTRA_HEADERS_JSON='{"HTTP-Referer":"https://your.site","X-OpenRouter-Title":"ARIN"}'
-#
-# Groq, OpenAI-compatible:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://api.groq.com/openai/v1"
-# DEFAULT_ANSWER_MODEL = "llama-3.3-70b-versatile"
-# DEFAULT_NEXT_QUESTION_MODEL = "llama-3.1-8b-instant"
-# env key: QI_LLM_API_KEY or GROQ_API_KEY
-#
-# Together AI, OpenAI-compatible:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://api.together.xyz/v1"
-# DEFAULT_ANSWER_MODEL = "Qwen/Qwen3.5-397B-A17B"
-# DEFAULT_NEXT_QUESTION_MODEL = "openai/gpt-oss-20b"
-# env key: QI_LLM_API_KEY or TOGETHER_API_KEY
-#
-# Fireworks AI, OpenAI-compatible:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://api.fireworks.ai/inference/v1"
-# DEFAULT_ANSWER_MODEL = "accounts/fireworks/models/kimi-k2p5"
-# DEFAULT_NEXT_QUESTION_MODEL = "accounts/fireworks/models/deepseek-v3p1"
-# env key: QI_LLM_API_KEY or FIREWORKS_API_KEY
-#
-# SiliconFlow, OpenAI-compatible:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "https://api.siliconflow.cn/v1"
-# DEFAULT_ANSWER_MODEL = "Pro/zai-org/GLM-4.7"
-# DEFAULT_NEXT_QUESTION_MODEL = "Qwen/Qwen3-32B"
-# env key: QI_LLM_API_KEY or SILICONFLOW_API_KEY
-#
-# Local vLLM OpenAI-compatible server:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "http://127.0.0.1:8000/v1"
-# DEFAULT_ANSWER_MODEL = "NousResearch/Meta-Llama-3-8B-Instruct"
-# DEFAULT_NEXT_QUESTION_MODEL = "NousResearch/Meta-Llama-3-8B-Instruct"
-# env key: optional unless server started with --api-key
-#
-# Local Ollama OpenAI-compatible server:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "http://127.0.0.1:11434/v1"
-# DEFAULT_ANSWER_MODEL = "gpt-oss:20b"
-# DEFAULT_NEXT_QUESTION_MODEL = "qwen3:8b"
-# env key: optional; Ollama examples use api_key="ollama", ignored by server
-#
-# Local LM Studio OpenAI-compatible server:
-# DEFAULT_LLM_BACKEND = "openai-compatible"
-# DEFAULT_API_BASE_URL = "http://127.0.0.1:1234/v1"
-# DEFAULT_ANSWER_MODEL = "use-the-model-identifier-loaded-in-lm-studio"
-# DEFAULT_NEXT_QUESTION_MODEL = "use-the-model-identifier-loaded-in-lm-studio"
-#
-# Azure OpenAI Chat Completions uses a deployment-specific full URL, not a plain /v1 base URL.
-# Keep backend openai-compatible, set QI_LLM_API_CHAT_URL to the full endpoint, and use api-key auth:
-# QI_LLM_API_CHAT_URL="https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=<api-version>"
-# QI_LLM_API_KEY_HEADER="api-key"
-# QI_LLM_API_KEY_PREFIX=""
 
 logger = logging.getLogger("llm_response")
 
 
 def default_models_dir() -> Path:
     return Path(os.getenv("LLM_MODELS_DIR") or os.getenv("QI_LLM_MODELS_DIR") or DEFAULT_LLM_MODELS_DIR).expanduser()
-
-
-def default_llm_backend() -> str:
-    return os.getenv("QI_LLM_BACKEND") or DEFAULT_LLM_BACKEND
-
-
-def default_backend_is_local_transformers() -> bool:
-    try:
-        return normalize_llm_backend(default_llm_backend()) == "local-transformers"
-    except ValueError:
-        return False
-
-
-def default_answer_model() -> str:
-    configured = os.getenv("QI_LLM_ANSWER_MODEL") or os.getenv("QI_LLM_MODEL")
-    if configured:
-        return configured
-    if default_backend_is_local_transformers():
-        return DEFAULT_LOCAL_ANSWER_MODEL
-    return DEFAULT_ANSWER_MODEL
-
-
-def default_next_question_model() -> str:
-    configured = os.getenv("QI_LLM_NEXT_QUESTION_MODEL") or os.getenv("QI_LLM_MODEL")
-    if configured:
-        return configured
-    if default_backend_is_local_transformers():
-        return DEFAULT_LOCAL_NEXT_QUESTION_MODEL
-    return DEFAULT_NEXT_QUESTION_MODEL
-
-
-def default_api_base_url(backend: str) -> str | None:
-    if backend == "anthropic":
-        return os.getenv("QI_LLM_API_BASE_URL") or os.getenv("ANTHROPIC_BASE_URL") or DEFAULT_ANTHROPIC_API_BASE_URL
-    return (
-        os.getenv("QI_LLM_API_BASE_URL")
-        or os.getenv("OPENROUTER_API_BASE_URL")
-        or os.getenv("OPENROUTER_BASE_URL")
-        or os.getenv("DEEPSEEK_API_BASE_URL")
-        or os.getenv("DEEPSEEK_BASE_URL")
-        or os.getenv("GEMINI_API_BASE_URL")
-        or os.getenv("OPENAI_BASE_URL")
-        or DEFAULT_API_BASE_URL
-    )
-
-
-def default_api_chat_url() -> str | None:
-    return os.getenv("QI_LLM_API_CHAT_URL")
-
-
-def default_api_key(backend: str) -> str | None:
-    if backend == "anthropic":
-        return os.getenv("QI_LLM_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
-    for env_name in (
-        "QI_LLM_API_KEY",
-        "OPENROUTER_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "OPENAI_API_KEY",
-        "GEMINI_API_KEY",
-        "XAI_API_KEY",
-        "MISTRAL_API_KEY",
-        "MOONSHOT_API_KEY",
-        "DASHSCOPE_API_KEY",
-        "GROQ_API_KEY",
-        "TOGETHER_API_KEY",
-        "FIREWORKS_API_KEY",
-        "SILICONFLOW_API_KEY",
-        "AZURE_OPENAI_API_KEY",
-    ):
-        value = os.getenv(env_name)
-        if value:
-            return value
-    return None
-
-
-def default_api_key_header() -> str:
-    return os.getenv("QI_LLM_API_KEY_HEADER") or "Authorization"
-
-
-def default_api_key_prefix() -> str | None:
-    return os.getenv("QI_LLM_API_KEY_PREFIX")
-
-
-def default_api_extra_headers() -> dict[str, str]:
-    raw = os.getenv("QI_LLM_API_EXTRA_HEADERS_JSON")
-    if not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError("QI_LLM_API_EXTRA_HEADERS_JSON must be a JSON object") from exc
-    if not isinstance(parsed, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in parsed.items()):
-        raise ValueError("QI_LLM_API_EXTRA_HEADERS_JSON must be a JSON object with string keys and string values")
-    return parsed
-
-
-def default_api_extra_body() -> dict[str, Any]:
-    raw = os.getenv("QI_LLM_API_EXTRA_BODY_JSON")
-    if not raw:
-        return dict(DEFAULT_API_EXTRA_BODY)
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError("QI_LLM_API_EXTRA_BODY_JSON must be a JSON object") from exc
-    if not isinstance(parsed, dict):
-        raise ValueError("QI_LLM_API_EXTRA_BODY_JSON must be a JSON object")
-    return parsed
-
-
-def default_api_response_format_json() -> bool:
-    value = os.getenv("QI_LLM_API_RESPONSE_FORMAT_JSON")
-    if value is None:
-        return DEFAULT_API_RESPONSE_FORMAT_JSON
-    return value.strip().lower() not in {"0", "false", "no", "off"}
-
-
-def default_api_timeout() -> float:
-    value = os.getenv("QI_LLM_API_TIMEOUT")
-    if not value:
-        return _DEFAULT_API_TIMEOUT_SECONDS
-    try:
-        timeout = float(value)
-    except ValueError:
-        return _DEFAULT_API_TIMEOUT_SECONDS
-    return timeout if timeout > 0 else _DEFAULT_API_TIMEOUT_SECONDS
 
 
 def hf_token() -> str | None:
@@ -349,7 +53,7 @@ When evidence is weak, stale, partial, low-confidence, or missing, say that expl
 For advice or forecast-style questions, separate observed facts from suitability/risk discussion and avoid direct buy/sell/hold recommendations.
 Match the user's language.
 
-Return only one valid JSON/json object with exactly these keys:
+Return only one valid JSON object with exactly these keys:
 {
   "answer": string,
   "key_points": [string],
@@ -378,7 +82,7 @@ Questions must be useful for financial analysis, grounded in the provided entity
 Prefer follow-ups that match the question type: fact -> detail/breakdown, why -> drivers/risks, advice -> suitability/risk horizon, compare -> peer metrics, forecast -> catalysts/downside.
 If the pipeline marks the query as out_of_scope, do not continue the out-of-scope topic; return 3 finance-oriented re-entry questions instead.
 
-Return only one valid JSON/json object with exactly this key:
+Return only one valid JSON object with exactly this key:
 {
   "predictions": [
     {"question": string, "score": number, "reason": string},
@@ -1487,9 +1191,6 @@ def normalize_answer(
     }
     for key in ("key_points", "evidence_used", "limitations"):
         answer[key] = [str(value).strip() for value in answer[key] if str(value).strip()]
-    if fallback_evidence:
-        valid_evidence = set(fallback_evidence)
-        answer["evidence_used"] = [evidence_id for evidence_id in answer["evidence_used"] if evidence_id in valid_evidence]
     if not answer["evidence_used"]:
         answer["evidence_used"] = fallback_evidence
     answer["evidence_used"] = answer["evidence_used"][:6]
@@ -1569,50 +1270,6 @@ def normalize_next_questions(
         "model_name": "",
         "predictions": normalized[:3],
     }
-
-
-def answer_matches_language(output: dict[str, Any], query: str) -> bool:
-    expected_zh = _is_zh(query)
-    text_values: list[str] = []
-    for key in ("answer", "risk_disclaimer"):
-        value = str(output.get(key) or "").strip()
-        if value:
-            text_values.append(value)
-    for key in ("key_points", "limitations"):
-        values = output.get(key)
-        if isinstance(values, list):
-            text_values.extend(str(item).strip() for item in values if str(item).strip())
-    if not text_values:
-        return True
-    return all(_is_zh(text) == expected_zh for text in text_values)
-
-
-def make_answer_language_repair_messages(query: str, output: dict[str, Any]) -> list[dict[str, str]]:
-    target_language = "Chinese" if _is_zh(query) else "English"
-    return [
-        {
-            "role": "system",
-            "content": (
-                "You rewrite answer-generation JSON into the user's language. "
-                "Return only one valid JSON object with exactly these keys: "
-                "answer, key_points, evidence_used, limitations, risk_disclaimer. "
-                "Preserve the financial meaning, risk caution, and evidence_used IDs. "
-                f"All natural-language strings must be in {target_language}."
-            ),
-        },
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "query": query,
-                    "target_language": target_language,
-                    "current_output": output,
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-        },
-    ]
 
 
 def next_questions_match_language(output: dict[str, Any], query: str) -> bool:
@@ -1728,256 +1385,7 @@ def resolve_model_path(model_id: str, *, models_dir: Path | None = None) -> str:
     return model_id
 
 
-def normalize_llm_backend(value: str) -> str:
-    backend = value.strip().lower().replace("_", "-")
-    aliases = {
-        "openai": "openai-compatible",
-        "deepseek": "openai-compatible",
-        "openai-compatible": "openai-compatible",
-        "openai-compatible-api": "openai-compatible",
-        "local": "openai-compatible",
-        "local-api": "openai-compatible",
-        "ollama": "openai-compatible",
-        "lmstudio": "openai-compatible",
-        "vllm": "openai-compatible",
-        "claude": "anthropic",
-        "anthropic": "anthropic",
-        "transformers": "local-transformers",
-        "hf": "local-transformers",
-        "huggingface": "local-transformers",
-        "local-transformers": "local-transformers",
-    }
-    try:
-        return aliases[backend]
-    except KeyError as exc:
-        raise ValueError(
-            "llm backend must be one of: openai-compatible, anthropic, local-transformers"
-        ) from exc
-
-
-def _join_api_url(base_url: str, suffix: str) -> str:
-    clean = base_url.strip().rstrip("/")
-    normalized_suffix = suffix.strip("/")
-    if clean.endswith(f"/{normalized_suffix}") or clean == normalized_suffix:
-        return clean
-    return f"{clean}/{normalized_suffix}"
-
-
-def _is_local_api_url(base_url: str) -> bool:
-    parsed = urlparse(base_url)
-    hostname = (parsed.hostname or "").lower()
-    return hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
-
-
-def _format_api_error(response: requests.Response) -> str:
-    body = response.text.strip()
-    if len(body) > 1000:
-        body = body[:1000] + "..."
-    return f"LLM API error {response.status_code}: {body or response.reason}"
-
-
-class BaseChatModel:
-    model_id: str
-
-    def generate_text(self, messages: list[dict[str, str]], *, max_new_tokens: int, temperature: float) -> str:
-        raise NotImplementedError
-
-    def generate_json(
-        self,
-        messages: list[dict[str, str]],
-        *,
-        max_new_tokens: int,
-        temperature: float,
-        json_retries: int = 1,
-    ) -> dict[str, Any]:
-        attempt_messages = list(messages)
-        last_error: Exception | None = None
-        for attempt in range(json_retries + 1):
-            generated_text = self.generate_text(
-                attempt_messages,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-            )
-            try:
-                parsed = extract_json_object(generated_text)
-                logger.info("Generated valid JSON: model=%s keys=%s attempt=%d", self.model_id, sorted(parsed.keys()), attempt + 1)
-                return parsed
-            except ValueError as exc:
-                last_error = exc
-                logger.warning("Invalid JSON from model=%s attempt=%d/%d: %s", self.model_id, attempt + 1, json_retries + 1, exc)
-                if attempt >= json_retries:
-                    break
-                attempt_messages = attempt_messages + [
-                    {"role": "assistant", "content": generated_text[:2000]},
-                    {
-                        "role": "user",
-                        "content": (
-                            "The previous response was not valid JSON. "
-                            "Return only one strict JSON object matching the requested schema. "
-                            "Do not include markdown fences, explanations, or extra text."
-                        ),
-                    },
-                ]
-        raise ValueError(f"model failed to produce valid JSON after {json_retries + 1} attempts") from last_error
-
-
-class OpenAICompatibleChatModel(BaseChatModel):
-    def __init__(
-        self,
-        model_id: str,
-        *,
-        base_url: str,
-        chat_url: str | None = None,
-        api_key: str | None,
-        api_key_header: str = "Authorization",
-        api_key_prefix: str | None = None,
-        extra_headers: dict[str, str] | None = None,
-        extra_body: dict[str, Any] | None = None,
-        response_format_json: bool = True,
-        timeout: float,
-    ) -> None:
-        self.model_id = model_id
-        self.base_url = base_url.strip().rstrip("/")
-        self.chat_url = chat_url.strip() if chat_url else None
-        self.api_key = api_key.strip() if api_key else None
-        self.api_key_header = api_key_header.strip() if api_key_header else "Authorization"
-        self.api_key_prefix = api_key_prefix
-        self.extra_headers = extra_headers or {}
-        self.extra_body = extra_body or {}
-        self.response_format_json = response_format_json
-        self.timeout = timeout
-        if not self.base_url and not self.chat_url:
-            raise SystemExit("Missing LLM API base URL. Set QI_LLM_API_BASE_URL or pass --api-base-url.")
-        if not self.api_key and not _is_local_api_url(self.chat_url or self.base_url):
-            raise SystemExit(
-                "Missing LLM API key. Set QI_LLM_API_KEY or a provider-specific key env var; "
-                "local API endpoints on localhost may omit a key."
-            )
-
-    def generate_text(self, messages: list[dict[str, str]], *, max_new_tokens: int, temperature: float) -> str:
-        endpoint = self.chat_url or _join_api_url(self.base_url, "chat/completions")
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            prefix = self.api_key_prefix
-            if prefix is None:
-                prefix = "Bearer " if self.api_key_header.lower() == "authorization" else ""
-            headers[self.api_key_header] = f"{prefix}{self.api_key}"
-        headers.update(self.extra_headers)
-        payload = {
-            "model": self.model_id,
-            "messages": messages,
-            "max_tokens": max_new_tokens,
-            "temperature": temperature,
-        }
-        if self.response_format_json and "response_format" not in self.extra_body:
-            payload["response_format"] = {"type": "json_object"}
-        payload.update(self.extra_body)
-        logger.info(
-            "Calling OpenAI-compatible LLM API: model=%s endpoint=%s messages=%d max_tokens=%d temperature=%.3f",
-            self.model_id,
-            endpoint,
-            len(messages),
-            max_new_tokens,
-            temperature,
-        )
-        try:
-            response = requests.post(endpoint, headers=headers, json=payload, timeout=self.timeout)
-        except requests.RequestException as exc:
-            raise RuntimeError(f"LLM API request failed: {exc}") from exc
-        if response.status_code >= 400:
-            raise RuntimeError(_format_api_error(response))
-        try:
-            data = response.json()
-        except ValueError as exc:
-            raise ValueError("LLM API response was not valid JSON") from exc
-        choices = data.get("choices") if isinstance(data, dict) else None
-        if not isinstance(choices, list) or not choices:
-            raise ValueError("LLM API response missing choices")
-        message = choices[0].get("message") if isinstance(choices[0], dict) else None
-        content = message.get("content") if isinstance(message, dict) else None
-        if isinstance(content, list):
-            parts = [item.get("text") for item in content if isinstance(item, dict)]
-            content = "".join(part for part in parts if isinstance(part, str))
-        if not isinstance(content, str):
-            raise ValueError("LLM API response missing message.content")
-        return content
-
-
-class AnthropicChatModel(BaseChatModel):
-    def __init__(
-        self,
-        model_id: str,
-        *,
-        base_url: str,
-        api_key: str | None,
-        timeout: float,
-        anthropic_version: str,
-    ) -> None:
-        self.model_id = model_id
-        self.base_url = base_url.strip().rstrip("/")
-        self.api_key = api_key.strip() if api_key else None
-        self.timeout = timeout
-        self.anthropic_version = anthropic_version
-        if not self.base_url:
-            raise SystemExit("Missing Anthropic API base URL. Set QI_LLM_API_BASE_URL or pass --api-base-url.")
-        if not self.api_key:
-            raise SystemExit("Missing Anthropic API key. Set QI_LLM_API_KEY or ANTHROPIC_API_KEY.")
-
-    def generate_text(self, messages: list[dict[str, str]], *, max_new_tokens: int, temperature: float) -> str:
-        endpoint = _join_api_url(self.base_url, "messages")
-        system_parts: list[str] = []
-        anthropic_messages: list[dict[str, str]] = []
-        for message in messages:
-            role = message.get("role")
-            content = message.get("content", "")
-            if role == "system":
-                system_parts.append(content)
-            elif role in {"user", "assistant"}:
-                anthropic_messages.append({"role": role, "content": content})
-            else:
-                anthropic_messages.append({"role": "user", "content": content})
-        payload: dict[str, Any] = {
-            "model": self.model_id,
-            "messages": anthropic_messages,
-            "max_tokens": max_new_tokens,
-            "temperature": temperature,
-        }
-        if system_parts:
-            payload["system"] = "\n\n".join(system_parts)
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": self.api_key,
-            "anthropic-version": self.anthropic_version,
-        }
-        logger.info(
-            "Calling Anthropic LLM API: model=%s endpoint=%s messages=%d max_tokens=%d temperature=%.3f",
-            self.model_id,
-            endpoint,
-            len(anthropic_messages),
-            max_new_tokens,
-            temperature,
-        )
-        try:
-            response = requests.post(endpoint, headers=headers, json=payload, timeout=self.timeout)
-        except requests.RequestException as exc:
-            raise RuntimeError(f"Anthropic API request failed: {exc}") from exc
-        if response.status_code >= 400:
-            raise RuntimeError(_format_api_error(response))
-        try:
-            data = response.json()
-        except ValueError as exc:
-            raise ValueError("Anthropic API response was not valid JSON") from exc
-        content = data.get("content") if isinstance(data, dict) else None
-        if not isinstance(content, list):
-            raise ValueError("Anthropic API response missing content")
-        text_parts = [item.get("text") for item in content if isinstance(item, dict) and item.get("type") == "text"]
-        text = "".join(part for part in text_parts if isinstance(part, str))
-        if not text:
-            raise ValueError("Anthropic API response missing text content")
-        return text
-
-
-class ChatModel(BaseChatModel):
+class ChatModel:
     def __init__(
         self,
         model_id: str,
@@ -2058,55 +1466,43 @@ class ChatModel(BaseChatModel):
         generated_ids = output_ids[0][inputs.input_ids.shape[-1] :]
         return self.tokenizer.decode(generated_ids, skip_special_tokens=True)
 
-
-def create_chat_model(
-    model_id: str,
-    *,
-    backend: str,
-    api_base_url: str | None,
-    api_chat_url: str | None,
-    api_key: str | None,
-    api_key_header: str,
-    api_key_prefix: str | None,
-    api_extra_headers: dict[str, str],
-    api_extra_body: dict[str, Any],
-    api_response_format_json: bool,
-    api_timeout: float,
-    anthropic_version: str,
-    device_map: str,
-    dtype: str,
-    models_dir: Path | None,
-    trust_remote_code: bool,
-) -> BaseChatModel:
-    normalized_backend = normalize_llm_backend(backend)
-    if normalized_backend == "openai-compatible":
-        return OpenAICompatibleChatModel(
-            model_id,
-            base_url=api_base_url or default_api_base_url(normalized_backend) or "",
-            chat_url=api_chat_url,
-            api_key=api_key if api_key is not None else default_api_key(normalized_backend),
-            api_key_header=api_key_header,
-            api_key_prefix=api_key_prefix,
-            extra_headers=api_extra_headers,
-            extra_body=api_extra_body,
-            response_format_json=api_response_format_json,
-            timeout=api_timeout,
-        )
-    if normalized_backend == "anthropic":
-        return AnthropicChatModel(
-            model_id,
-            base_url=api_base_url or default_api_base_url(normalized_backend) or "",
-            api_key=api_key if api_key is not None else default_api_key(normalized_backend),
-            timeout=api_timeout,
-            anthropic_version=anthropic_version,
-        )
-    return ChatModel(
-        model_id,
-        device_map=device_map,
-        dtype=dtype,
-        models_dir=models_dir,
-        trust_remote_code=trust_remote_code,
-    )
+    def generate_json(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        max_new_tokens: int,
+        temperature: float,
+        json_retries: int = 1,
+    ) -> dict[str, Any]:
+        attempt_messages = list(messages)
+        last_error: Exception | None = None
+        for attempt in range(json_retries + 1):
+            generated_text = self.generate_text(
+                attempt_messages,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+            )
+            try:
+                parsed = extract_json_object(generated_text)
+                logger.info("Generated valid JSON: model=%s keys=%s attempt=%d", self.model_id, sorted(parsed.keys()), attempt + 1)
+                return parsed
+            except ValueError as exc:
+                last_error = exc
+                logger.warning("Invalid JSON from model=%s attempt=%d/%d: %s", self.model_id, attempt + 1, json_retries + 1, exc)
+                if attempt >= json_retries:
+                    break
+                attempt_messages = attempt_messages + [
+                    {"role": "assistant", "content": generated_text[:2000]},
+                    {
+                        "role": "user",
+                        "content": (
+                            "The previous response was not valid JSON. "
+                            "Return only one strict JSON object matching the requested schema. "
+                            "Do not include markdown fences, explanations, or extra text."
+                        ),
+                    },
+                ]
+        raise ValueError(f"model failed to produce valid JSON after {json_retries + 1} attempts") from last_error
 
 
 def make_messages(system_prompt: str, few_shots: list[dict[str, Any]], payload: dict[str, Any]) -> list[dict[str, str]]:
@@ -2166,21 +1562,10 @@ class LLMResponseRuntime:
     def __init__(
         self,
         *,
-        llm_backend: str,
         answer_model: str,
         next_question_model: str,
         models_dir: Path,
         few_shot_source: Path,
-        api_base_url: str | None,
-        api_chat_url: str | None,
-        api_key: str | None,
-        api_key_header: str,
-        api_key_prefix: str | None,
-        api_extra_headers: dict[str, str],
-        api_extra_body: dict[str, Any],
-        api_response_format_json: bool,
-        api_timeout: float,
-        anthropic_version: str,
         device_map: str,
         dtype: str,
         temperature: float,
@@ -2190,7 +1575,6 @@ class LLMResponseRuntime:
         trust_remote_code: bool = False,
     ) -> None:
         logger.info("Initializing LLM response runtime")
-        self.llm_backend = normalize_llm_backend(llm_backend)
         self.answer_model_name = answer_model
         self.next_question_model_name = next_question_model
         self.temperature = temperature
@@ -2199,42 +1583,8 @@ class LLMResponseRuntime:
         self.json_retries = json_retries
         self.answer_few_shot_bank, self.next_question_few_shot_bank = load_few_shot_bank(few_shot_source)
         logger.info("Loaded few-shot bank: source=%s styles=%s", few_shot_source, sorted(self.answer_few_shot_bank.keys()))
-        self.answer_model = create_chat_model(
-            answer_model,
-            backend=self.llm_backend,
-            api_base_url=api_base_url,
-            api_chat_url=api_chat_url,
-            api_key=api_key,
-            api_key_header=api_key_header,
-            api_key_prefix=api_key_prefix,
-            api_extra_headers=api_extra_headers,
-            api_extra_body=api_extra_body,
-            api_response_format_json=api_response_format_json,
-            api_timeout=api_timeout,
-            anthropic_version=anthropic_version,
-            device_map=device_map,
-            dtype=dtype,
-            models_dir=models_dir,
-            trust_remote_code=trust_remote_code,
-        )
-        self.next_question_model = create_chat_model(
-            next_question_model,
-            backend=self.llm_backend,
-            api_base_url=api_base_url,
-            api_chat_url=api_chat_url,
-            api_key=api_key,
-            api_key_header=api_key_header,
-            api_key_prefix=api_key_prefix,
-            api_extra_headers=api_extra_headers,
-            api_extra_body=api_extra_body,
-            api_response_format_json=api_response_format_json,
-            api_timeout=api_timeout,
-            anthropic_version=anthropic_version,
-            device_map=device_map,
-            dtype=dtype,
-            models_dir=models_dir,
-            trust_remote_code=trust_remote_code,
-        )
+        self.answer_model = ChatModel(answer_model, device_map=device_map, dtype=dtype, models_dir=models_dir, trust_remote_code=trust_remote_code)
+        self.next_question_model = ChatModel(next_question_model, device_map=device_map, dtype=dtype, models_dir=models_dir, trust_remote_code=trust_remote_code)
         logger.info("LLM response runtime ready")
 
     def generate(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -2277,14 +1627,6 @@ class LLMResponseRuntime:
             json_retries=self.json_retries,
         )
         query = str(payload.get("query") or "")
-        if not answer_matches_language(answer_output, query):
-            logger.info("Repairing answer language: model=%s", self.answer_model_name)
-            answer_output = self.answer_model.generate_json(
-                make_answer_language_repair_messages(query, answer_output),
-                max_new_tokens=self.answer_max_new_tokens,
-                temperature=0,
-                json_retries=self.json_retries,
-            )
         if not next_questions_match_language(next_question_output, query):
             logger.info("Repairing next-question language: model=%s", self.next_question_model_name)
             next_question_output = self.next_question_model.generate_json(
@@ -2340,21 +1682,10 @@ def build_record_from_query(
 
 def make_runtime(args: argparse.Namespace) -> LLMResponseRuntime:
     return LLMResponseRuntime(
-        llm_backend=args.llm_backend,
         answer_model=args.answer_model,
         next_question_model=args.next_question_model,
         models_dir=args.models_dir,
         few_shot_source=args.few_shot_source,
-        api_base_url=args.api_base_url,
-        api_chat_url=args.api_chat_url,
-        api_key=args.api_key,
-        api_key_header=args.api_key_header,
-        api_key_prefix=args.api_key_prefix,
-        api_extra_headers=args.api_extra_headers,
-        api_extra_body=args.api_extra_body,
-        api_response_format_json=args.api_response_format_json,
-        api_timeout=args.api_timeout,
-        anthropic_version=args.anthropic_version,
         device_map=args.device_map,
         dtype=args.dtype,
         temperature=args.temperature,
@@ -2456,7 +1787,6 @@ def run_service(args: argparse.Namespace) -> None:
                 HTTPStatus.OK,
                 {
                     "status": "ok",
-                    "llm_backend": args.llm_backend,
                     "answer_model": args.answer_model,
                     "next_question_model": args.next_question_model,
                 },
@@ -2556,80 +1886,21 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1", help="Host for --serve mode.")
     parser.add_argument("--port", type=int, default=8010, help="Port for --serve mode.")
     parser.add_argument("--output", type=Path, default=None, help="Optional output JSON path. Omit to print JSON to stdout.")
-    parser.add_argument("--llm-backend", default=default_llm_backend(), help="LLM backend: openai-compatible, anthropic, or local-transformers.")
-    parser.add_argument("--answer-model", default=default_answer_model())
-    parser.add_argument("--next-question-model", default=default_next_question_model())
-    parser.add_argument("--api-base-url", default=None, help="Remote or local OpenAI-compatible/Anthropic API base URL. Defaults to QI_LLM_API_BASE_URL or DeepSeek.")
-    parser.add_argument("--api-chat-url", default=default_api_chat_url(), help="Full OpenAI-compatible chat completions URL. Useful for Azure deployment-specific endpoints.")
-    parser.add_argument("--api-key", default=None, help="LLM API key. Defaults to QI_LLM_API_KEY, provider-specific API key env vars, or no key for localhost APIs.")
-    parser.add_argument("--api-key-header", default=default_api_key_header(), help="HTTP header used for OpenAI-compatible API keys. Defaults to Authorization; Azure uses api-key.")
-    parser.add_argument("--api-key-prefix", default=default_api_key_prefix(), help="Prefix before API key. Defaults to 'Bearer ' for Authorization and empty for other headers.")
-    parser.add_argument("--api-extra-headers-json", default=os.getenv("QI_LLM_API_EXTRA_HEADERS_JSON"), help="JSON object of extra HTTP headers for OpenAI-compatible calls.")
-    parser.add_argument("--api-extra-body-json", default=os.getenv("QI_LLM_API_EXTRA_BODY_JSON"), help="JSON object merged into every OpenAI-compatible request body, for provider options such as reasoning_effort.")
-    parser.add_argument("--no-api-response-format-json", dest="api_response_format_json", action="store_false", default=default_api_response_format_json(), help="Disable response_format={\"type\":\"json_object\"} for OpenAI-compatible JSON generation.")
-    parser.add_argument("--api-timeout", type=float, default=default_api_timeout(), help="LLM API request timeout in seconds.")
-    parser.add_argument("--anthropic-version", default=os.getenv("QI_LLM_ANTHROPIC_VERSION") or DEFAULT_ANTHROPIC_VERSION)
+    parser.add_argument("--answer-model", default=DEFAULT_ANSWER_MODEL)
+    parser.add_argument("--next-question-model", default=DEFAULT_NEXT_QUESTION_MODEL)
     parser.add_argument("--models-dir", type=Path, default=default_models_dir(), help="Local LLM model directory checked before HuggingFace model IDs.")
     parser.add_argument("--few-shot-source", type=Path, default=DEFAULT_FEW_SHOT_SOURCE)
     parser.add_argument("--top-k", type=int, default=20, help="Retrieval top-k when --query is used.")
     parser.add_argument("--debug", action="store_true", help="Enable Query Intelligence debug mode when --query is used.")
     parser.add_argument("--device-map", default="auto")
     parser.add_argument("--dtype", choices=["auto", "float16", "bfloat16", "float32"], default="auto")
-    parser.add_argument(
-        "--answer-max-new-tokens",
-        type=int,
-        default=DEFAULT_ANSWER_MAX_NEW_TOKENS,
-        help=f"Maximum generated tokens for answer_generation. Default: {DEFAULT_ANSWER_MAX_NEW_TOKENS}.",
-    )
-    parser.add_argument(
-        "--next-max-new-tokens",
-        type=int,
-        default=DEFAULT_NEXT_MAX_NEW_TOKENS,
-        help=f"Maximum generated tokens for next_question_prediction. Default: {DEFAULT_NEXT_MAX_NEW_TOKENS}.",
-    )
+    parser.add_argument("--answer-max-new-tokens", type=int, default=700)
+    parser.add_argument("--next-max-new-tokens", type=int, default=260)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--json-retries", type=int, default=1, help="Strict JSON retry count after repair/parsing failure.")
     parser.add_argument("--trust-remote-code", action="store_true", help="Allow HuggingFace model repositories to execute remote code. Use only for audited models.")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
-    try:
-        args.llm_backend = normalize_llm_backend(args.llm_backend)
-    except ValueError as exc:
-        parser.error(str(exc))
-    try:
-        args.api_extra_headers = default_api_extra_headers() if args.api_extra_headers_json is None else json.loads(args.api_extra_headers_json)
-    except json.JSONDecodeError as exc:
-        parser.error(f"--api-extra-headers-json must be a JSON object: {exc}")
-    except ValueError as exc:
-        parser.error(str(exc))
-    if not isinstance(args.api_extra_headers, dict) or not all(
-        isinstance(key, str) and isinstance(value, str) for key, value in args.api_extra_headers.items()
-    ):
-        parser.error("--api-extra-headers-json must be a JSON object with string keys and string values")
-    try:
-        args.api_extra_body = default_api_extra_body() if args.api_extra_body_json is None else json.loads(args.api_extra_body_json)
-    except json.JSONDecodeError as exc:
-        parser.error(f"--api-extra-body-json must be a JSON object: {exc}")
-    except ValueError as exc:
-        parser.error(str(exc))
-    if not isinstance(args.api_extra_body, dict):
-        parser.error("--api-extra-body-json must be a JSON object")
-    answer_model_supplied = any(item == "--answer-model" or item.startswith("--answer-model=") for item in sys.argv[1:])
-    next_question_model_supplied = any(
-        item == "--next-question-model" or item.startswith("--next-question-model=") for item in sys.argv[1:]
-    )
-    if args.llm_backend == "local-transformers":
-        if not answer_model_supplied and not (os.getenv("QI_LLM_ANSWER_MODEL") or os.getenv("QI_LLM_MODEL")):
-            args.answer_model = DEFAULT_LOCAL_ANSWER_MODEL
-        if not next_question_model_supplied and not (os.getenv("QI_LLM_NEXT_QUESTION_MODEL") or os.getenv("QI_LLM_MODEL")):
-            args.next_question_model = DEFAULT_LOCAL_NEXT_QUESTION_MODEL
-    if args.llm_backend == "anthropic":
-        if not answer_model_supplied and not (os.getenv("QI_LLM_ANSWER_MODEL") or os.getenv("QI_LLM_MODEL")):
-            parser.error("--llm-backend anthropic requires --answer-model, QI_LLM_ANSWER_MODEL, or QI_LLM_MODEL")
-        if not next_question_model_supplied and not (os.getenv("QI_LLM_NEXT_QUESTION_MODEL") or os.getenv("QI_LLM_MODEL")):
-            parser.error("--llm-backend anthropic requires --next-question-model, QI_LLM_NEXT_QUESTION_MODEL, or QI_LLM_MODEL")
-    if args.api_timeout <= 0:
-        parser.error("--api-timeout must be > 0")
     if args.json_retries < 0:
         parser.error("--json-retries must be >= 0")
     if not args.serve and args.input is None and args.query is None:

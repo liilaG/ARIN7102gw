@@ -193,4 +193,4 @@ analysis_summary
     └── relevant_topics
 ```
 
-完整字段说明见 `../docs/retrieval_output_spec.md`。
+完整字段说明见 `docs/retrieval_output_spec.md`。

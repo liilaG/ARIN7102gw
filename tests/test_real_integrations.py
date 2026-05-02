@@ -527,6 +527,20 @@ def test_live_market_flag_enables_related_live_document_sources_by_default(monke
     assert settings.use_live_announcement is True
 
 
+def test_live_sources_are_enabled_by_default(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.delenv("QI_USE_LIVE_MARKET", raising=False)
+    monkeypatch.delenv("QI_USE_LIVE_NEWS", raising=False)
+    monkeypatch.delenv("QI_USE_LIVE_ANNOUNCEMENT", raising=False)
+    monkeypatch.delenv("QI_USE_LIVE_MACRO", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.use_live_market is True
+    assert settings.use_live_news is True
+    assert settings.use_live_announcement is True
+    assert settings.use_live_macro is True
+
+
 def test_live_document_sources_can_still_be_disabled_explicitly(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setenv("QI_USE_LIVE_MARKET", "1")
     monkeypatch.setenv("QI_USE_LIVE_NEWS", "0")

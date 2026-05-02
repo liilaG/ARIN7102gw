@@ -11,10 +11,10 @@ class Settings:
     cninfo_announcement_url: str = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
     cninfo_static_base: str = "https://static.cninfo.com.cn/"
     request_timeout_seconds: int = 15
-    use_live_market: bool = False
-    use_live_macro: bool = False
-    use_live_news: bool = False
-    use_live_announcement: bool = False
+    use_live_market: bool = True
+    use_live_macro: bool = True
+    use_live_news: bool = True
+    use_live_announcement: bool = True
     use_postgres_retrieval: bool = False
     training_dataset_path: str | None = None
     models_dir: str = "models"
@@ -26,7 +26,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        live_market_raw = os.getenv("QI_USE_LIVE_MARKET", "")
+        live_market_raw = os.getenv("QI_USE_LIVE_MARKET", "true")
         return cls(
             tushare_token=os.getenv("TUSHARE_TOKEN"),
             postgres_dsn=os.getenv("QI_POSTGRES_DSN"),
@@ -34,7 +34,7 @@ class Settings:
             cninfo_static_base=os.getenv("CNINFO_STATIC_BASE", "https://static.cninfo.com.cn/"),
             request_timeout_seconds=int(os.getenv("QI_HTTP_TIMEOUT_SECONDS", "15")),
             use_live_market=live_market_raw.lower() in {"1", "true", "yes"},
-            use_live_macro=os.getenv("QI_USE_LIVE_MACRO", "").lower() in {"1", "true", "yes"},
+            use_live_macro=os.getenv("QI_USE_LIVE_MACRO", "true").lower() in {"1", "true", "yes"},
             use_live_news=os.getenv("QI_USE_LIVE_NEWS", live_market_raw).lower() in {"1", "true", "yes"},
             use_live_announcement=os.getenv("QI_USE_LIVE_ANNOUNCEMENT", live_market_raw).lower() in {"1", "true", "yes"},
             use_postgres_retrieval=os.getenv("QI_USE_POSTGRES_RETRIEVAL", "").lower() in {"1", "true", "yes"},
