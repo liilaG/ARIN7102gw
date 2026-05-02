@@ -1,0 +1,21 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8765
+  },
+  "ui": {
+    "title": "Financial Chatbot by Group 4.2",
+    "input_placeholder": "Ask a financial question, e.g. What do you think about Ping An Insurance (601318.SH)?",
+    "submit_text": "Submit"
+  },
+  "deepseek": {
+    "base_url": "https://api.deepseek.com/v1",
+    "chat_path": "/chat/completions",
+    "model": "deepseek-chat",
+    "api_key": "",
+    "timeout_seconds": 30
+  },
+  "live_data": {
+    "enabled": true
+  }
+}
